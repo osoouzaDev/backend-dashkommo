@@ -5,9 +5,8 @@
   "main": "main.js",
   "scripts": {
     "dev": "tsx watch src/main.ts",
-    "test": "vitest -w",
-    "build": "npm install && tsc",
-    "start": "node ./dist/main.js"
+    "build": "tsc",
+    "start": "node dist/main.js"
   },
   "author": "souzadev",
   "license": "ISC",
