@@ -53,6 +53,7 @@ class BancoMysql {
             100504439: "Tenho que descobrir",
             100233527: "Qualificado - Em conversa",
             84315468: "Alinhamento Regulaziração / L. de Pendências",
+            83852672: "Vaga de Emprego",
             81175456: "Gerar Forms",
             78136192: "IRPF 2025",
             73520776: "Movido para Cadência",
