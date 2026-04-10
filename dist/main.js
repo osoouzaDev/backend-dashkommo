@@ -35,17 +35,37 @@ const webhookSecret = getRequiredEnv("WEBHOOK_SECRET");
 const allowedOrigins = [
     "http://localhost:3000",
     "http://localhost:3001",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
     "https://frontend-dashkommo.vercel.app",
 ];
+function isAllowedOrigin(origin) {
+    if (allowedOrigins.includes(origin)) {
+        return true;
+    }
+    try {
+        const url = new URL(origin);
+        if (url.protocol !== "https:") {
+            return false;
+        }
+        if (url.hostname === "frontend-dashkommo.vercel.app") {
+            return true;
+        }
+        if (url.hostname.endsWith(".vercel.app")) {
+            return true;
+        }
+        return false;
+    }
+    catch {
+        return false;
+    }
+}
 const corsOptions = {
     origin: (origin, callback) => {
         if (!origin) {
-            if (process.env.NODE_ENV === "production") {
-                return callback(new Error("Origem não permitida pelo CORS"));
-            }
             return callback(null, true);
         }
-        if (allowedOrigins.includes(origin)) {
+        if (isAllowedOrigin(origin)) {
             return callback(null, true);
         }
         return callback(new Error(`Origem não permitida pelo CORS: ${origin}`));
@@ -120,29 +140,47 @@ app.post("/webhook", webhookLimiter, async (req, res) => {
     }
     try {
         const data = req.body;
-        await bancoMysql_1.banco.salvarWebhook("kommo_event", data);
+        const webhookPrincipalId = await bancoMysql_1.banco.salvarWebhook("kommo_event", data);
         const leadsAdd = Array.isArray(data?.leads?.add)
             ? data.leads.add
             : [];
         const leadsUpdate = Array.isArray(data?.leads?.update)
             ? data.leads.update
             : [];
-        console.log("Webhook recebido.", {
-            leadsAdd: leadsAdd.length,
-            leadsUpdate: leadsUpdate.length,
-            leadDireto: Boolean(data?.id &&
-                data?.pipeline_id &&
-                data?.status_id &&
-                data?.responsible_user_id),
-        });
+        const ehLeadDireto = Boolean(data?.id &&
+            data?.pipeline_id &&
+            data?.status_id &&
+            data?.responsible_user_id);
+        const diagnostico = {
+            webhookPrincipalId,
+            leadsAddRecebidos: leadsAdd.length,
+            leadsUpdateRecebidos: leadsUpdate.length,
+            ehLeadDireto,
+            leadDiretoProcessado: false,
+            leadDiretoErro: null,
+            leadsAddProcessados: 0,
+            leadsAddErros: [],
+            leadsUpdateProcessados: 0,
+            leadsUpdateErros: [],
+            dbHost: process.env.DB_HOST,
+            dbName: process.env.DB_NAME,
+        };
+        console.log("Webhook recebido.", diagnostico);
         for (const lead of leadsAdd) {
             try {
                 await bancoMysql_1.banco.salvarWebhook("lead_add", lead);
                 await bancoMysql_1.banco.processarLead(lead);
+                diagnostico.leadsAddProcessados += 1;
             }
-            catch {
+            catch (error) {
+                const erro = error instanceof Error ? error.message : "Erro desconhecido";
+                diagnostico.leadsAddErros.push({
+                    leadId: lead?.id ?? null,
+                    erro,
+                });
                 console.error("Erro ao processar lead_add.", {
                     leadId: lead?.id ?? null,
+                    erro,
                 });
             }
         }
@@ -150,33 +188,48 @@ app.post("/webhook", webhookLimiter, async (req, res) => {
             try {
                 await bancoMysql_1.banco.salvarWebhook("lead_update", lead);
                 await bancoMysql_1.banco.processarLead(lead);
+                diagnostico.leadsUpdateProcessados += 1;
             }
-            catch {
+            catch (error) {
+                const erro = error instanceof Error ? error.message : "Erro desconhecido";
+                diagnostico.leadsUpdateErros.push({
+                    leadId: lead?.id ?? null,
+                    erro,
+                });
                 console.error("Erro ao processar lead_update.", {
                     leadId: lead?.id ?? null,
+                    erro,
                 });
             }
         }
-        const ehLeadDireto = data?.id &&
-            data?.pipeline_id &&
-            data?.status_id &&
-            data?.responsible_user_id;
         if (ehLeadDireto) {
             try {
                 await bancoMysql_1.banco.salvarWebhook("lead_direct", data);
                 await bancoMysql_1.banco.processarLead(data);
+                diagnostico.leadDiretoProcessado = true;
             }
-            catch {
+            catch (error) {
+                const erro = error instanceof Error ? error.message : "Erro desconhecido";
+                diagnostico.leadDiretoErro = erro;
                 console.error("Erro ao processar lead direto.", {
                     leadId: data?.id ?? null,
+                    erro,
                 });
             }
         }
-        return res.sendStatus(200);
+        return res.status(200).json({
+            message: "Webhook processado",
+            diagnostico,
+        });
     }
     catch (error) {
         console.error("Erro no webhook.", error);
-        return res.status(500).json({ message: "Erro no webhook" });
+        return res.status(500).json({
+            message: "Erro no webhook",
+            erro: error instanceof Error ? error.message : "Erro desconhecido",
+            dbHost: process.env.DB_HOST,
+            dbName: process.env.DB_NAME,
+        });
     }
 });
 app.get("/relatorio", auth_1.autenticarToken, autorizarAdmin_1.autorizarAdmin, async (_req, res) => {

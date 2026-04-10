@@ -139,8 +139,14 @@ class BancoMysql {
         const criadoEmLocal = new Date().toLocaleString("sv-SE", {
             timeZone: "America/Cuiaba",
         });
-        await this.pool.execute("INSERT INTO webhooks (evento, payload, criado_em_local) VALUES (?, ?, ?)", [evento.trim(), JSON.stringify(payload), criadoEmLocal]);
-        this.logInfo("Webhook salvo.", { evento: evento.trim() });
+        const [result] = await this.pool.execute("INSERT INTO webhooks (evento, payload, criado_em_local) VALUES (?, ?, ?)", [evento.trim(), JSON.stringify(payload), criadoEmLocal]);
+        this.logInfo("Webhook salvo.", {
+            evento: evento.trim(),
+            insertId: result.insertId,
+            dbHost: process.env.DB_HOST,
+            dbName: process.env.DB_NAME,
+        });
+        return result.insertId;
     }
     mapearEtapa(statusId) {
         const etapas = {
@@ -167,6 +173,13 @@ class BancoMysql {
             142: "Ganho",
         };
         return etapas[statusId] ?? "Desconhecido";
+    }
+    classificarStatus(statusId) {
+        if (statusId === 142)
+            return "ganho";
+        if (statusId === 143)
+            return "perdido";
+        return "andamento";
     }
     mapearConsultorNome(consultorId) {
         const consultores = {
@@ -294,7 +307,10 @@ class BancoMysql {
                 data_atualizacao
              FROM funil_vendas
              ORDER BY data_criacao DESC`);
-        return rows;
+        return rows.map((item) => ({
+            ...item,
+            categoria: this.classificarStatus(Number(item.status_id)),
+        }));
     }
     async totalLeadsGanhos() {
         const [rows] = await this.pool.query(`SELECT COALESCE(SUM(valor), 0) AS total
