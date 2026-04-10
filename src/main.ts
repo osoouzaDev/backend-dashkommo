@@ -33,19 +33,39 @@ const webhookSecret = getRequiredEnv("WEBHOOK_SECRET");
 const allowedOrigins = [
     "http://localhost:3000",
     "http://localhost:3001",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
     "https://frontend-dashkommo.vercel.app",
 ];
+
+function isAllowedOrigin(origin: string): boolean {
+    if (allowedOrigins.includes(origin)) {
+        return true;
+    }
+
+    try {
+        const url = new URL(origin);
+
+        if (url.protocol !== "https:") {
+            return false;
+        }
+
+        return url.hostname === "frontend-dashkommo.vercel.app" || url.hostname.endsWith(".vercel.app");
+    } catch {
+        return false;
+    }
+}
 
 const corsOptions: CorsOptions = {
     origin: (origin, callback) => {
         if (!origin) {
             if (process.env.NODE_ENV === "production") {
-                return callback(new Error("Origem não permitida pelo CORS"));
+                return callback(null, true);
             }
             return callback(null, true);
         }
 
-        if (allowedOrigins.includes(origin)) {
+        if (isAllowedOrigin(origin)) {
             return callback(null, true);
         }
 
