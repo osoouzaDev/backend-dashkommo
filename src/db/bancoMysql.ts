@@ -370,25 +370,28 @@ class BancoMysql {
         }
     }
 
-    async relatorioLeads(): Promise<any> {
-        const [rows] = await this.pool.query(
+    async relatorioLeads(): Promise<any[]> {
+        const [rows] = await this.pool.query<RowDataPacket[]>(
             `SELECT
-                lead_id,
-                lead_nome,
-                consultor_id,
-                consultor_nome,
-                origem,
-                pipeline_id,
-                status_id,
-                etapa,
-                valor,
-                data_criacao,
-                data_atualizacao
-             FROM funil_vendas
-             ORDER BY data_criacao DESC`
+            lead_id,
+            lead_nome,
+            consultor_id,
+            consultor_nome,
+            origem,
+            pipeline_id,
+            status_id,
+            etapa,
+            valor,
+            data_criacao,
+            data_atualizacao
+         FROM funil_vendas
+         ORDER BY data_criacao DESC`
         );
 
-        return rows;
+        return rows.map((item: any) => ({
+            ...item,
+            categoria: this.classificarStatus(Number(item.status_id))
+        }));
     }
 
     async totalLeadsGanhos(): Promise<number> {
@@ -541,6 +544,12 @@ class BancoMysql {
         }
 
         await this.pool.execute("DELETE FROM usuarios WHERE id = ?", [userId]);
+    }
+
+    classificarStatus(statusId: number | null): "ganho" | "perdido" | "andamento" {
+        if (statusId === 142) return "ganho";
+        if (statusId === 143) return "perdido";
+        return "andamento";
     }
 }
 
