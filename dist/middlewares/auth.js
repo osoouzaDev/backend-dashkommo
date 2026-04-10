@@ -5,12 +5,11 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.autenticarToken = autenticarToken;
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
-const Tokenblacklist_1 = require("./Tokenblacklist");
+const token_blacklist_1 = require("./token-blacklist");
 function getRequiredEnv(name) {
     const value = process.env[name]?.trim();
-    if (!value) {
+    if (!value)
         throw new Error(`Variável de ambiente obrigatória ausente: ${name}`);
-    }
     return value;
 }
 const secret = getRequiredEnv("JWT_SECRET");
@@ -23,7 +22,7 @@ function autenticarToken(req, res, next) {
     if (!token) {
         return res.sendStatus(401);
     }
-    if (Tokenblacklist_1.tokenBlacklist.has(token)) {
+    if (token_blacklist_1.tokenBlacklist.has(token)) {
         return res.sendStatus(401);
     }
     try {

@@ -14,7 +14,7 @@ const express_rate_limit_1 = __importDefault(require("express-rate-limit"));
 const bancoMysql_1 = require("./db/bancoMysql");
 const auth_1 = require("./middlewares/auth");
 const autorizarAdmin_1 = require("./middlewares/autorizarAdmin");
-const Tokenblacklist_1 = require("./middlewares/Tokenblacklist");
+const token_blacklist_1 = require("./middlewares/token-blacklist");
 // ─── Erro de validação tipado ─────────────────────────────────────────────────
 class ValidationError extends Error {
     constructor(message) {
@@ -208,7 +208,7 @@ app.post("/login", loginLimiter, async (req, res) => {
 app.post("/logout", auth_1.autenticarToken, (req, res) => {
     const token = req.headers["authorization"]?.split(" ")[1];
     if (token)
-        Tokenblacklist_1.tokenBlacklist.add(token);
+        token_blacklist_1.tokenBlacklist.add(token);
     return res.json({ message: "Logout realizado com sucesso" });
 });
 // FIX: body destruturado — sem mass assignment

@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
-import { tokenBlacklist } from "./Tokenblacklist";
+import { tokenBlacklist } from "./token-blacklist";
 
 export interface TokenPayload {
     id: number;
@@ -14,9 +14,7 @@ export interface AuthRequest extends Request {
 
 function getRequiredEnv(name: string): string {
     const value = process.env[name]?.trim();
-    if (!value) {
-        throw new Error(`Variável de ambiente obrigatória ausente: ${name}`);
-    }
+    if (!value) throw new Error(`Variável de ambiente obrigatória ausente: ${name}`);
     return value;
 }
 

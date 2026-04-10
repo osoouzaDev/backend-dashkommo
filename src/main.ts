@@ -8,7 +8,7 @@ import rateLimit from "express-rate-limit";
 import { banco } from "./db/bancoMysql";
 import { autenticarToken, AuthRequest } from "./middlewares/auth";
 import { autorizarAdmin } from "./middlewares/autorizarAdmin";
-import { tokenBlacklist } from "./middlewares/Tokenblacklist";
+import { tokenBlacklist } from "./middlewares/token-blacklist";
 
 // ─── Erro de validação tipado ─────────────────────────────────────────────────
 
