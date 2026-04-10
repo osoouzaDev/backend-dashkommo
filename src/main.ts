@@ -66,7 +66,6 @@ function isAllowedOrigin(origin: string): boolean {
 
 const corsOptions: CorsOptions = {
     origin: (origin, callback) => {
-        // Postman, Insomnia, curl e chamadas servidor-servidor costumam vir sem Origin
         if (!origin) {
             return callback(null, true);
         }
@@ -167,7 +166,7 @@ app.post("/webhook", webhookLimiter, async (req: Request, res: Response) => {
     try {
         const data = req.body;
 
-        await banco.salvarWebhook("kommo_event", data);
+        const webhookPrincipalId = await banco.salvarWebhook("kommo_event", data);
 
         const leadsAdd: unknown[] = Array.isArray(data?.leads?.add)
             ? data.leads.add
@@ -177,24 +176,44 @@ app.post("/webhook", webhookLimiter, async (req: Request, res: Response) => {
             ? data.leads.update
             : [];
 
-        console.log("Webhook recebido.", {
-            leadsAdd: leadsAdd.length,
-            leadsUpdate: leadsUpdate.length,
-            leadDireto: Boolean(
-                data?.id &&
-                data?.pipeline_id &&
-                data?.status_id &&
-                data?.responsible_user_id
-            ),
-        });
+        const ehLeadDireto = Boolean(
+            data?.id &&
+            data?.pipeline_id &&
+            data?.status_id &&
+            data?.responsible_user_id
+        );
+
+        const diagnostico = {
+            webhookPrincipalId,
+            leadsAddRecebidos: leadsAdd.length,
+            leadsUpdateRecebidos: leadsUpdate.length,
+            ehLeadDireto,
+            leadDiretoProcessado: false,
+            leadDiretoErro: null as string | null,
+            leadsAddProcessados: 0,
+            leadsAddErros: [] as Array<{ leadId: unknown; erro: string }>,
+            leadsUpdateProcessados: 0,
+            leadsUpdateErros: [] as Array<{ leadId: unknown; erro: string }>,
+            dbHost: process.env.DB_HOST,
+            dbName: process.env.DB_NAME,
+        };
+
+        console.log("Webhook recebido.", diagnostico);
 
         for (const lead of leadsAdd) {
             try {
                 await banco.salvarWebhook("lead_add", lead);
                 await banco.processarLead(lead);
-            } catch {
+                diagnostico.leadsAddProcessados += 1;
+            } catch (error: any) {
+                const erro = error instanceof Error ? error.message : "Erro desconhecido";
+                diagnostico.leadsAddErros.push({
+                    leadId: (lead as any)?.id ?? null,
+                    erro,
+                });
                 console.error("Erro ao processar lead_add.", {
                     leadId: (lead as any)?.id ?? null,
+                    erro,
                 });
             }
         }
@@ -203,34 +222,47 @@ app.post("/webhook", webhookLimiter, async (req: Request, res: Response) => {
             try {
                 await banco.salvarWebhook("lead_update", lead);
                 await banco.processarLead(lead);
-            } catch {
+                diagnostico.leadsUpdateProcessados += 1;
+            } catch (error: any) {
+                const erro = error instanceof Error ? error.message : "Erro desconhecido";
+                diagnostico.leadsUpdateErros.push({
+                    leadId: (lead as any)?.id ?? null,
+                    erro,
+                });
                 console.error("Erro ao processar lead_update.", {
                     leadId: (lead as any)?.id ?? null,
+                    erro,
                 });
             }
         }
-
-        const ehLeadDireto =
-            data?.id &&
-            data?.pipeline_id &&
-            data?.status_id &&
-            data?.responsible_user_id;
 
         if (ehLeadDireto) {
             try {
                 await banco.salvarWebhook("lead_direct", data);
                 await banco.processarLead(data);
-            } catch {
+                diagnostico.leadDiretoProcessado = true;
+            } catch (error: any) {
+                const erro = error instanceof Error ? error.message : "Erro desconhecido";
+                diagnostico.leadDiretoErro = erro;
                 console.error("Erro ao processar lead direto.", {
                     leadId: data?.id ?? null,
+                    erro,
                 });
             }
         }
 
-        return res.sendStatus(200);
-    } catch (error) {
+        return res.status(200).json({
+            message: "Webhook processado",
+            diagnostico,
+        });
+    } catch (error: any) {
         console.error("Erro no webhook.", error);
-        return res.status(500).json({ message: "Erro no webhook" });
+        return res.status(500).json({
+            message: "Erro no webhook",
+            erro: error instanceof Error ? error.message : "Erro desconhecido",
+            dbHost: process.env.DB_HOST,
+            dbName: process.env.DB_NAME,
+        });
     }
 });
 

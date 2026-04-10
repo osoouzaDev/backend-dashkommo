@@ -183,7 +183,7 @@ class BancoMysql {
         }
     }
 
-    async salvarWebhook(evento: string, payload: unknown): Promise<void> {
+    async salvarWebhook(evento: string, payload: unknown): Promise<number> {
         if (!evento?.trim()) {
             throw new Error("Evento do webhook é obrigatório.");
         }
@@ -194,12 +194,19 @@ class BancoMysql {
             timeZone: "America/Cuiaba",
         });
 
-        await this.pool.execute(
+        const [result] = await this.pool.execute<ResultSetHeader>(
             "INSERT INTO webhooks (evento, payload, criado_em_local) VALUES (?, ?, ?)",
             [evento.trim(), JSON.stringify(payload), criadoEmLocal]
         );
 
-        this.logInfo("Webhook salvo.", { evento: evento.trim() });
+        this.logInfo("Webhook salvo.", {
+            evento: evento.trim(),
+            insertId: result.insertId,
+            dbHost: process.env.DB_HOST,
+            dbName: process.env.DB_NAME,
+        });
+
+        return result.insertId;
     }
 
     mapearEtapa(statusId: number): string {
@@ -228,6 +235,12 @@ class BancoMysql {
         };
 
         return etapas[statusId] ?? "Desconhecido";
+    }
+
+    classificarStatus(statusId: number | null): "ganho" | "perdido" | "andamento" {
+        if (statusId === 142) return "ganho";
+        if (statusId === 143) return "perdido";
+        return "andamento";
     }
 
     private mapearConsultorNome(consultorId: number | null): string | null {
@@ -373,24 +386,24 @@ class BancoMysql {
     async relatorioLeads(): Promise<any[]> {
         const [rows] = await this.pool.query<RowDataPacket[]>(
             `SELECT
-            lead_id,
-            lead_nome,
-            consultor_id,
-            consultor_nome,
-            origem,
-            pipeline_id,
-            status_id,
-            etapa,
-            valor,
-            data_criacao,
-            data_atualizacao
-         FROM funil_vendas
-         ORDER BY data_criacao DESC`
+                lead_id,
+                lead_nome,
+                consultor_id,
+                consultor_nome,
+                origem,
+                pipeline_id,
+                status_id,
+                etapa,
+                valor,
+                data_criacao,
+                data_atualizacao
+             FROM funil_vendas
+             ORDER BY data_criacao DESC`
         );
 
         return rows.map((item: any) => ({
             ...item,
-            categoria: this.classificarStatus(Number(item.status_id))
+            categoria: this.classificarStatus(Number(item.status_id)),
         }));
     }
 
@@ -544,12 +557,6 @@ class BancoMysql {
         }
 
         await this.pool.execute("DELETE FROM usuarios WHERE id = ?", [userId]);
-    }
-
-    classificarStatus(statusId: number | null): "ganho" | "perdido" | "andamento" {
-        if (statusId === 142) return "ganho";
-        if (statusId === 143) return "perdido";
-        return "andamento";
     }
 }
 
