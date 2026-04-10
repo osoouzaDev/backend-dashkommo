@@ -50,7 +50,15 @@ function isAllowedOrigin(origin: string): boolean {
             return false;
         }
 
-        return url.hostname === "frontend-dashkommo.vercel.app" || url.hostname.endsWith(".vercel.app");
+        if (url.hostname === "frontend-dashkommo.vercel.app") {
+            return true;
+        }
+
+        if (url.hostname.endsWith(".vercel.app")) {
+            return true;
+        }
+
+        return false;
     } catch {
         return false;
     }
@@ -58,10 +66,8 @@ function isAllowedOrigin(origin: string): boolean {
 
 const corsOptions: CorsOptions = {
     origin: (origin, callback) => {
+        // Postman, Insomnia, curl e chamadas servidor-servidor costumam vir sem Origin
         if (!origin) {
-            if (process.env.NODE_ENV === "production") {
-                return callback(null, true);
-            }
             return callback(null, true);
         }
 
@@ -176,9 +182,9 @@ app.post("/webhook", webhookLimiter, async (req: Request, res: Response) => {
             leadsUpdate: leadsUpdate.length,
             leadDireto: Boolean(
                 data?.id &&
-                    data?.pipeline_id &&
-                    data?.status_id &&
-                    data?.responsible_user_id
+                data?.pipeline_id &&
+                data?.status_id &&
+                data?.responsible_user_id
             ),
         });
 
