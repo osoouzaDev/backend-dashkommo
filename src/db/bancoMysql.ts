@@ -271,6 +271,7 @@ class BancoMysql {
             13637692: "Rafael",
             13661460: "Gabriel | B.O.S Hoss",
             11016300: "Gestor Comercial",
+            15050505: "Luís/Testes",
         };
 
         if (!consultorId) {
