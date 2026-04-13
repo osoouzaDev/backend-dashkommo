@@ -451,6 +451,29 @@ class BancoMysql {
         }));
     }
 
+    async relatorioLeadsGanhos(): Promise<any> {
+        const [rows] = await this.pool.query(
+            `SELECT lead_id, lead_nome, consultor_id, consultor_nome, origem,
+                    pipeline_id, status_id, etapa, valor, data_criacao, data_atualizacao
+             FROM funil_vendas
+             WHERE status_id = 142
+             ORDER BY data_criacao DESC`
+        );
+        return rows;
+    }
+
+    async buscarLeadsPorPeriodo(dataInicio: string, dataFim: string): Promise<any> {
+        const [rows] = await this.pool.query(
+            `SELECT lead_id, lead_nome, consultor_id, consultor_nome, origem,
+                    pipeline_id, status_id, etapa, valor, data_criacao, data_atualizacao
+             FROM funil_vendas
+             WHERE data_criacao BETWEEN ? AND ?
+             ORDER BY data_criacao DESC`,
+            [`${dataInicio} 00:00:00`, `${dataFim} 23:59:59`]
+        );
+        return rows;
+    }
+
     async totalLeadsGanhos(): Promise<number> {
         const [rows] = await this.pool.query<RowDataPacket[]>(
             `SELECT COALESCE(SUM(valor), 0) AS total
