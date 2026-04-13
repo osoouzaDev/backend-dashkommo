@@ -160,6 +160,12 @@ app.get("/", (_req: Request, res: Response) => {
 });
 
 app.post("/webhook", async (req: Request, res: Response) => {
+    console.log("=== WEBHOOK RECEBIDO ===");
+    console.log("Method:", req.method);
+    console.log("Path:", req.path);
+    console.log("Origin:", req.headers.origin ?? null);
+    console.log("User-Agent:", req.headers["user-agent"] ?? null);
+
     try {
         const data = req.body;
 
