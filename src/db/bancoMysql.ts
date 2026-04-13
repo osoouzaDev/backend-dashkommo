@@ -24,6 +24,28 @@ interface UsuarioDB extends RowDataPacket {
 const TIMEZONE = "-04:00";
 const MAX_LEAD_NOME = 255;
 
+const STATUS_VALIDOS = new Set<number>([
+    100504439, // Tenho que descobrir
+    100233527, // Qualificado - Em conversa
+    84315468,  // Alinhamento Regulaziração / L. de Pendências
+    81175456,  // Gerar Forms
+    73520776,  // Movido para Cadência
+    72912304,  // Lead novo
+    72897132,  // Fazer Ligação
+    72762308,  // Funil Nutrição a Longo Prazo
+    72670564,  // Fechamento
+    72656692,  // Proposta
+    72649772,  // Reunião
+    68647324,  // Perdido
+    68432532,  // Negociação
+    68325220,  // Fechamento
+    68325216,  // Envio de Proposta
+    66780248,  // Conversa
+    66773868,  // Venda
+    143,       // Perdido
+    142,       // Ganho
+]);
+
 class BancoMysql {
     private pool: Pool;
     private static readonly BCRYPT_ROUNDS = 12;
@@ -214,9 +236,7 @@ class BancoMysql {
             100504439: "Tenho que descobrir",
             100233527: "Qualificado - Em conversa",
             84315468: "Alinhamento Regulaziração / L. de Pendências",
-            83852672: "Vaga de Emprego",
             81175456: "Gerar Forms",
-            78136192: "IRPF 2025",
             73520776: "Movido para Cadência",
             72912304: "Lead novo",
             72897132: "Fazer Ligação",
@@ -250,7 +270,7 @@ class BancoMysql {
             1120681: "Ana",
             13637692: "Rafael",
             13661460: "Gabriel | B.O.S Hoss",
-            11016300: "Anderson Maisse",
+            11016300: "Gestor Comercial",
         };
 
         if (!consultorId) {
@@ -303,8 +323,31 @@ class BancoMysql {
             const consultorNome = this.mapearConsultorNome(consultorId);
 
             const pipelineId = lead?.pipeline_id ? Number(lead.pipeline_id) : null;
-            const statusId = lead?.status_id ? Number(lead.status_id) : null;
-            const etapa = statusId ? this.mapearEtapa(statusId) : "Desconhecido";
+            const statusIdRaw = Number(lead?.status_id);
+
+            if (!Number.isInteger(statusIdRaw)) {
+                this.logInfo("Lead ignorado por status inválido.", {
+                    leadId,
+                    statusId: lead?.status_id ?? null,
+                    pipelineId,
+                    nome: leadNome,
+                });
+                return;
+            }
+
+            const statusId: number = statusIdRaw;
+
+            if (!STATUS_VALIDOS.has(statusId)) {
+                this.logInfo("Lead ignorado por status fora da regra.", {
+                    leadId,
+                    statusId,
+                    pipelineId,
+                    nome: leadNome,
+                });
+                return;
+            }
+
+            const etapa = this.mapearEtapa(statusId);
 
             const valor = Number(lead?.price ?? 0);
 
