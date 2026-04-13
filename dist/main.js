@@ -38,13 +38,24 @@ const allowedOrigins = [
     "http://127.0.0.1:3000",
     "http://127.0.0.1:3001",
     "https://frontend-dashkommo.vercel.app",
+    "https://kommo.com",
+    "https://www.kommo.com",
+    "https://amcontabilidade.kommo.com",
 ];
+function isKommoOrigin(hostname) {
+    return hostname === "kommo.com" || hostname === "www.kommo.com" || hostname.endsWith(".kommo.com");
+}
 function isAllowedOrigin(origin) {
     if (allowedOrigins.includes(origin)) {
         return true;
     }
     try {
         const url = new URL(origin);
+        const isLocalhost = url.protocol === "http:" &&
+            (url.hostname === "localhost" || url.hostname === "127.0.0.1");
+        if (isLocalhost) {
+            return allowedOrigins.includes(origin);
+        }
         if (url.protocol !== "https:") {
             return false;
         }
@@ -52,6 +63,9 @@ function isAllowedOrigin(origin) {
             return true;
         }
         if (url.hostname.endsWith(".vercel.app")) {
+            return true;
+        }
+        if (isKommoOrigin(url.hostname)) {
             return true;
         }
         return false;
