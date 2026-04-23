@@ -174,9 +174,9 @@ class BancoMysql {
     private async gerarHashSenha(senha: string): Promise<string> {
         return argon2.hash(senha, {
             type: argon2.argon2id,
-            memoryCost: 19456,
-            timeCost: 2,
-            parallelism: 1,
+            memoryCost: 65536,
+            timeCost: 3,
+            parallelism: 2,
         });
     }
 
