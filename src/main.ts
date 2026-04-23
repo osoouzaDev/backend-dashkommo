@@ -2,14 +2,13 @@ import "dotenv/config";
 import express, { Request, Response, NextFunction } from "express";
 import cors, { CorsOptions } from "cors";
 import bcrypt from "bcryptjs";
+import argon2 from "argon2";
 import jwt from "jsonwebtoken";
 import rateLimit from "express-rate-limit";
 import { banco } from "./db/bancoMysql";
 import { autenticarToken, AuthRequest } from "./middlewares/auth";
 import { autorizarAdmin } from "./middlewares/autorizarAdmin";
 import { tokenBlacklist } from "./middlewares/token-blacklist";
-import { PdfService } from "./services/pdfService";
-import { EmailService } from "./services/emailService";
 
 export class ValidationError extends Error {
     constructor(message: string) {
@@ -157,6 +156,18 @@ function responderErro(
     return res.status(500).json({ message: mensagemGenerica });
 }
 
+function isArgon2Hash(hash: string): boolean {
+    return hash.startsWith("$argon2");
+}
+
+function isBcryptHash(hash: string): boolean {
+    return (
+        hash.startsWith("$2a$") ||
+        hash.startsWith("$2b$") ||
+        hash.startsWith("$2y$")
+    );
+}
+
 app.get("/", (_req: Request, res: Response) => {
     res.status(200).json({ ok: true, message: "Backend funcionando" });
 });
@@ -261,55 +272,6 @@ app.get(
     }
 );
 
-app.get("/relatorios/leads/exportar", autenticarToken, autorizarAdmin, async (req: Request, res: Response) => {
-    try {
-        const { data_inicio, data_fim } = req.query;
-
-        if (!data_inicio || !data_fim) {
-            return res.status(400).json({ message: "Data inicial e final são obrigatórias (YYYY-MM-DD)" });
-        }
-
-        const leads = await banco.buscarLeadsPorPeriodo(String(data_inicio), String(data_fim));
-        const pdfBuffer = await PdfService.gerarRelatorioLeads(leads, String(data_inicio), String(data_fim));
-
-        res.setHeader("Content-Type", "application/pdf");
-        res.setHeader("Content-Disposition", `attachment; filename=relatorio-leads-${data_inicio}-a-${data_fim}.pdf`);
-        return res.send(pdfBuffer);
-    } catch (error) {
-        console.error("Erro ao exportar relatório PDF.", error);
-        return res.status(500).json({ message: "Erro ao exportar relatório PDF" });
-    }
-});
-
-app.post("/relatorios/leads/enviar-email", autenticarToken, autorizarAdmin, async (req: Request, res: Response) => {
-    try {
-        const { data_inicio, data_fim, email_destino } = req.body;
-
-        if (!data_inicio || !data_fim || !email_destino) {
-            return res.status(400).json({ message: "Data inicial, final e email de destino são obrigatórios" });
-        }
-
-        const leads = await banco.buscarLeadsPorPeriodo(String(data_inicio), String(data_fim));
-        const pdfBuffer = await PdfService.gerarRelatorioLeads(leads, String(data_inicio), String(data_fim));
-
-        const assunto = `DashKommo - Resumo de Leads (${data_inicio} a ${data_fim})`;
-        const corpo = `Olá,\n\nSegue em anexo o relatório de leads do período de ${data_inicio} a ${data_fim}.\n\nAtenciosamente,\nEquipe DashKommo`;
-
-        await EmailService.enviarRelatorioComAnexo(
-            email_destino,
-            assunto,
-            corpo,
-            `relatorio-leads-${data_inicio}-a-${data_fim}.pdf`,
-            pdfBuffer
-        );
-
-        return res.status(200).json({ message: "Relatório enviado com sucesso para " + email_destino });
-    } catch (error) {
-        console.error("Erro ao enviar relatório por e-mail.", error);
-        return res.status(500).json({ message: "Erro ao enviar relatório por e-mail" });
-    }
-});
-
 app.post("/login", loginLimiter, async (req: Request, res: Response) => {
     try {
         const { userLogin, senha } = req.body;
@@ -329,12 +291,30 @@ app.post("/login", loginLimiter, async (req: Request, res: Response) => {
             });
         }
 
-        const senhaValida = await bcrypt.compare(String(senha), usuario.senha);
+        let senhaValida = false;
+        let precisaMigrarHash = false;
+
+        if (isArgon2Hash(usuario.senha)) {
+            senhaValida = await argon2.verify(usuario.senha, String(senha));
+        } else if (isBcryptHash(usuario.senha)) {
+            senhaValida = await bcrypt.compare(String(senha), usuario.senha);
+            if (senhaValida) {
+                precisaMigrarHash = true;
+            }
+        } else {
+            return res.status(401).json({
+                message: "Usuário ou senha incorretos",
+            });
+        }
 
         if (!senhaValida) {
             return res.status(401).json({
                 message: "Usuário ou senha incorretos",
             });
+        }
+
+        if (precisaMigrarHash) {
+            await banco.atualizarHashSenha(usuario.id, String(senha));
         }
 
         const token = jwt.sign(

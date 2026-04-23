@@ -1,5 +1,5 @@
 import mysql, { Pool, RowDataPacket, ResultSetHeader } from "mysql2/promise";
-import bcrypt from "bcryptjs";
+import argon2 from "argon2";
 
 export interface Usuario {
     id?: number;
@@ -25,30 +25,29 @@ const TIMEZONE = "-04:00";
 const MAX_LEAD_NOME = 255;
 
 const STATUS_VALIDOS = new Set<number>([
-    100504439, // Tenho que descobrir
-    100233527, // Qualificado - Em conversa
-    84315468,  // Alinhamento Regulaziração / L. de Pendências
-    81175456,  // Gerar Forms
-    73520776,  // Movido para Cadência
-    72912304,  // Lead novo
-    72897132,  // Fazer Ligação
-    72762308,  // Funil Nutrição a Longo Prazo
-    72670564,  // Fechamento
-    72656692,  // Proposta
-    72649772,  // Reunião
-    68647324,  // Perdido
-    68432532,  // Negociação
-    68325220,  // Fechamento
-    68325216,  // Envio de Proposta
-    66780248,  // Conversa
-    66773868,  // Venda
-    143,       // Perdido
-    142,       // Ganho
+    100504439,
+    100233527,
+    84315468,
+    81175456,
+    73520776,
+    72912304,
+    72897132,
+    72762308,
+    72670564,
+    72656692,
+    72649772,
+    68647324,
+    68432532,
+    68325220,
+    68325216,
+    66780248,
+    66773868,
+    143,
+    142,
 ]);
 
 class BancoMysql {
     private pool: Pool;
-    private static readonly BCRYPT_ROUNDS = 12;
     private static readonly MAX_WEBHOOK_PAYLOAD_BYTES = 200_000;
 
     constructor() {
@@ -167,9 +166,18 @@ class BancoMysql {
             throw new Error("A senha deve ter no mínimo 8 caracteres.");
         }
 
-        if (senha.length > 72) {
-            throw new Error("A senha não pode ter mais de 72 caracteres.");
+        if (senha.length > 255) {
+            throw new Error("A senha não pode ter mais de 255 caracteres.");
         }
+    }
+
+    private async gerarHashSenha(senha: string): Promise<string> {
+        return argon2.hash(senha, {
+            type: argon2.argon2id,
+            memoryCost: 19456,
+            timeCost: 2,
+            parallelism: 1,
+        });
     }
 
     private validarUsuario(usuario: Usuario, exigirSenha: boolean): void {
@@ -495,15 +503,28 @@ class BancoMysql {
         return rows;
     }
 
+    async atualizarHashSenha(userId: number, senha: string): Promise<void> {
+        if (!Number.isInteger(userId) || userId <= 0) {
+            throw new Error("ID de usuário inválido.");
+        }
+
+        this.validarSenha(senha);
+        const senhaHash = await this.gerarHashSenha(senha);
+
+        await this.pool.execute(
+            `UPDATE usuarios
+             SET senha = ?
+             WHERE id = ?`,
+            [senhaHash, userId]
+        );
+    }
+
     async insertUser(usuario: Usuario): Promise<number> {
         this.validarUsuario(usuario, true);
 
         const emailNormalizado = this.normalizarEmail(usuario.email);
         const loginNormalizado = this.normalizarLogin(usuario.userLogin);
-        const senhaHash = await bcrypt.hash(
-            usuario.senha as string,
-            BancoMysql.BCRYPT_ROUNDS
-        );
+        const senhaHash = await this.gerarHashSenha(usuario.senha as string);
 
         try {
             const [result] = await this.pool.execute<ResultSetHeader>(
@@ -573,10 +594,7 @@ class BancoMysql {
         if (atualizarSenha) {
             this.validarSenha(usuario.senha!);
 
-            const senhaHash = await bcrypt.hash(
-                usuario.senha!,
-                BancoMysql.BCRYPT_ROUNDS
-            );
+            const senhaHash = await this.gerarHashSenha(usuario.senha!);
 
             sql = `UPDATE usuarios
                    SET nome=?, email=?, acesso=?, setor=?, userLogin=?, senha=?
