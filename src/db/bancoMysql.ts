@@ -48,6 +48,7 @@ const STATUS_VALIDOS = new Set<number>([
 
 class BancoMysql {
     private pool: Pool;
+    private readonly passwordPepper: string;
     private static readonly MAX_WEBHOOK_PAYLOAD_BYTES = 200_000;
 
     constructor() {
@@ -57,6 +58,8 @@ class BancoMysql {
         const database = this.getRequiredEnv("DB_NAME");
         const port = process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306;
         const useSSL = process.env.DB_SSL === "true";
+
+        this.passwordPepper = this.getRequiredEnv("PASSWORD_PEPPER");
 
         if (!Number.isInteger(port) || port <= 0) {
             throw new Error("DB_PORT inválida.");
@@ -81,9 +84,11 @@ class BancoMysql {
 
     private getRequiredEnv(name: string): string {
         const value = process.env[name]?.trim();
+
         if (!value) {
             throw new Error(`Variável de ambiente obrigatória ausente: ${name}`);
         }
+
         return value;
     }
 
@@ -101,6 +106,10 @@ class BancoMysql {
 
     private normalizarLogin(login: string): string {
         return login.trim();
+    }
+
+    private aplicarPepper(senha: string): string {
+        return senha + this.passwordPepper;
     }
 
     private validarEmail(email: string): void {
@@ -172,7 +181,7 @@ class BancoMysql {
     }
 
     private async gerarHashSenha(senha: string): Promise<string> {
-        return argon2.hash(senha, {
+        return argon2.hash(this.aplicarPepper(senha), {
             type: argon2.argon2id,
             memoryCost: 65536,
             timeCost: 3,
@@ -467,6 +476,7 @@ class BancoMysql {
              WHERE status_id = 142
              ORDER BY data_criacao DESC`
         );
+
         return rows;
     }
 
@@ -479,6 +489,7 @@ class BancoMysql {
              ORDER BY data_criacao DESC`,
             [`${dataInicio} 00:00:00`, `${dataFim} 23:59:59`]
         );
+
         return rows;
     }
 
@@ -509,6 +520,7 @@ class BancoMysql {
         }
 
         this.validarSenha(senha);
+
         const senhaHash = await this.gerarHashSenha(senha);
 
         await this.pool.execute(
@@ -545,6 +557,7 @@ class BancoMysql {
             if (error?.code === "ER_DUP_ENTRY") {
                 throw new Error("Já existe usuário com esse email ou login.");
             }
+
             throw error;
         }
     }
@@ -630,6 +643,7 @@ class BancoMysql {
             if (error?.code === "ER_DUP_ENTRY") {
                 throw new Error("Já existe usuário com esse email ou login.");
             }
+
             throw error;
         }
     }

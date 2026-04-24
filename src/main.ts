@@ -21,13 +21,16 @@ const app = express();
 
 function getRequiredEnv(name: string): string {
     const value = process.env[name]?.trim();
+
     if (!value) {
         throw new Error(`Variável de ambiente obrigatória ausente: ${name}`);
     }
+
     return value;
 }
 
 const secret = getRequiredEnv("JWT_SECRET");
+const passwordPepper = getRequiredEnv("PASSWORD_PEPPER");
 
 const allowedOrigins = [
     "http://localhost:3000",
@@ -294,10 +297,26 @@ app.post("/login", loginLimiter, async (req: Request, res: Response) => {
         let senhaValida = false;
         let precisaMigrarHash = false;
 
+        const senhaDigitada = String(senha);
+        const senhaComPepper = senhaDigitada + passwordPepper;
+
         if (isArgon2Hash(usuario.senha)) {
-            senhaValida = await argon2.verify(usuario.senha, String(senha));
+            senhaValida = await argon2.verify(usuario.senha, senhaComPepper);
+
+            if (!senhaValida) {
+                const senhaValidaSemPepper = await argon2.verify(
+                    usuario.senha,
+                    senhaDigitada
+                );
+
+                if (senhaValidaSemPepper) {
+                    senhaValida = true;
+                    precisaMigrarHash = true;
+                }
+            }
         } else if (isBcryptHash(usuario.senha)) {
-            senhaValida = await bcrypt.compare(String(senha), usuario.senha);
+            senhaValida = await bcrypt.compare(senhaDigitada, usuario.senha);
+
             if (senhaValida) {
                 precisaMigrarHash = true;
             }
@@ -314,7 +333,7 @@ app.post("/login", loginLimiter, async (req: Request, res: Response) => {
         }
 
         if (precisaMigrarHash) {
-            await banco.atualizarHashSenha(usuario.id, String(senha));
+            await banco.atualizarHashSenha(usuario.id, senhaDigitada);
         }
 
         const token = jwt.sign(
