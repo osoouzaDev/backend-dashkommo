@@ -1,5 +1,4 @@
 .env
-.env
 node_modules/.bin/bcrypt
 node_modules/.bin/bcrypt.cmd
 node_modules/.bin/bcrypt.ps1
