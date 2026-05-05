@@ -228,7 +228,19 @@ app.use(
         },
     })
 );
-app.use(express.urlencoded({ extended: true, limit: "200kb" }));
+app.use(
+    express.urlencoded({
+        extended: true,
+        limit: "200kb",
+        verify: (req, _res, buffer) => {
+            // Alguns provedores enviam webhook como x-www-form-urlencoded.
+            const request = req as Request & { rawBody?: string };
+            if (!request.rawBody) {
+                request.rawBody = buffer.toString("utf-8");
+            }
+        },
+    })
+);
 
 const globalLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -582,8 +594,12 @@ app.get("/", (_req: Request, res: Response) => {
 });
 
 app.post("/webhook", webhookLimiter, async (req: Request, res: Response) => {
-    const signatureHeader = getHeaderString(req.headers["x-webhook-signature"]);
-    const timestampHeader = getHeaderString(req.headers["x-webhook-timestamp"]);
+    const signatureHeader =
+        getHeaderString(req.headers["x-webhook-signature"]) ??
+        getHeaderString(req.headers["x-signature"]);
+    const timestampHeader =
+        getHeaderString(req.headers["x-webhook-timestamp"]) ??
+        getHeaderString(req.headers["x-timestamp"]);
     const legacySecretHeader = getHeaderString(req.headers["x-webhook-secret"]);
     const rawBody = req.rawBody ?? "";
     const hmacValido = await isWebhookSignatureValid(signatureHeader, timestampHeader, rawBody);
@@ -594,6 +610,11 @@ app.post("/webhook", webhookLimiter, async (req: Request, res: Response) => {
         await registrarAuditoriaSeguro("webhook_recebido", "negado", {
             ip: getClientIp(req),
             motivo: "assinatura inválida",
+            possuiAssinatura: Boolean(signatureHeader),
+            possuiTimestamp: Boolean(timestampHeader),
+            possuiRawBody: Boolean(rawBody),
+            legadoHabilitado: webhookAllowLegacySecret,
+            possuiHeaderLegado: Boolean(legacySecretHeader),
             requestId: req.requestId ?? null,
         });
         return res.status(401).json({ message: "Webhook não autorizado" });
