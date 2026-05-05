@@ -63,6 +63,7 @@ Variaveis principais:
 - `DB_SSL` (legado; prefira `DB_SSL_MODE`)
 - `DB_SSL_REJECT_UNAUTHORIZED` (legado; usado com `DB_SSL=true`)
 - `DB_SSL_MODE` (`off`, `required` ou `verify-ca`)
+- `DB_SSL_CA_PEM` (recomendado no Render; CA em PEM, aceita `\n`)
 - `DB_SSL_CA_PATH` (opcional, caminho para CA customizado)
 - `JWT_SECRET` (segredo forte, minimo 32 chars)
 - `JWT_ISSUER`
@@ -83,8 +84,16 @@ Variaveis principais:
 
 Se seu provedor exigir CA customizado:
 
-1. Salve o CA em `certs/ca.pem`
-2. Inicie com:
+1. Preferencial (Render): usar env `DB_SSL_CA_PEM` com o conteudo completo do certificado PEM.
+2. Opcional: salvar em arquivo e usar `DB_SSL_CA_PATH`.
+
+Exemplo de `DB_SSL_CA_PEM`:
+
+```env
+DB_SSL_CA_PEM=-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----
+```
+
+Opcao alternativa com arquivo:
 
 ```powershell
 $env:NODE_EXTRA_CA_CERTS='C:\caminho\para\certs\ca.pem'

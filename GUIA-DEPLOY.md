@@ -20,6 +20,7 @@ Preencher no ambiente:
 - `DB_NAME`
 - `DB_SSL=true`
 - `DB_SSL_REJECT_UNAUTHORIZED=true`
+- `DB_SSL_CA_PEM` (recomendado no Render)
 - `JWT_SECRET` (forte)
 - `JWT_ISSUER`
 - `JWT_AUDIENCE`
@@ -31,7 +32,8 @@ Preencher no ambiente:
 
 Se banco usar CA customizado:
 
-- Definir `NODE_EXTRA_CA_CERTS` apontando para o arquivo CA.
+- Preferir `DB_SSL_CA_PEM` com o conteudo PEM completo.
+- Alternativa: `DB_SSL_CA_PATH` + arquivo no container.
 
 ## 3. Segredos (regra)
 

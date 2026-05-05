@@ -132,13 +132,21 @@ class BancoMysql {
         }
 
         const rejectUnauthorized = sslMode === "verify-ca";
+        const sslCaPemRaw = process.env.DB_SSL_CA_PEM?.trim();
+        const sslCaPem = sslCaPemRaw ? sslCaPemRaw.replace(/\\n/g, "\n") : undefined;
         const sslCaPath = process.env.DB_SSL_CA_PATH?.trim();
+        let ca: string | undefined;
 
-        if (!sslCaPath) {
+        if (sslCaPem) {
+            ca = sslCaPem;
+        } else if (sslCaPath) {
+            ca = readFileSync(sslCaPath, "utf-8");
+        }
+
+        if (!ca) {
             return { rejectUnauthorized };
         }
 
-        const ca = readFileSync(sslCaPath, "utf-8");
         return {
             rejectUnauthorized,
             ca,

@@ -4,7 +4,8 @@
   "description": "",
   "main": "main.js",
   "scripts": {
-    "dev": "cross-env NODE_EXTRA_CA_CERTS=./certs/ca.pem tsx watch src/main.ts",
+    "dev": "tsx watch src/main.ts",
+    "dev:ca-file": "cross-env NODE_EXTRA_CA_CERTS=./certs/ca.pem tsx watch src/main.ts",
     "build": "tsc",
     "start": "node dist/main.js"
   },
