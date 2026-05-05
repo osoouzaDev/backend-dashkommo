@@ -839,7 +839,7 @@ class BancoMysql {
                     "ORIGEM DO LEAD",
                     "Origem TXT",
                     "ORIGEM",
-                ]) ?? "Não qualificado";
+                ]) ?? "Não classificado";
 
             await this.pool.execute(
                 `INSERT INTO funil_vendas
