@@ -1,5 +1,7 @@
 import mysql, { Pool, RowDataPacket, ResultSetHeader } from "mysql2/promise";
 import argon2 from "argon2";
+import { createHash } from "crypto";
+import { readFileSync } from "fs";
 
 export interface Usuario {
     id?: number;
@@ -19,6 +21,22 @@ interface UsuarioDB extends RowDataPacket {
     setor: string;
     userLogin: string;
     senha: string;
+}
+
+interface LoginLockoutDB extends RowDataPacket {
+    attempt_key: string;
+    fail_count: number;
+    lock_until: Date | null;
+}
+
+interface RefreshTokenDB extends RowDataPacket {
+    id: number;
+    token_hash: string;
+    user_id: number;
+    family_id: string;
+    expira_em: Date;
+    revogado_em: Date | null;
+    substituido_por_hash: string | null;
 }
 
 const TIMEZONE = "-04:00";
@@ -57,12 +75,16 @@ class BancoMysql {
         const password = this.getRequiredEnv("DB_PASSWORD");
         const database = this.getRequiredEnv("DB_NAME");
         const port = process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306;
-        const useSSL = process.env.DB_SSL === "true";
+        const sslMode = this.getDbSslMode();
 
-        this.passwordPepper = this.getRequiredEnv("PASSWORD_PEPPER");
+        this.passwordPepper = this.getStrongSecretEnv("PASSWORD_PEPPER");
 
         if (!Number.isInteger(port) || port <= 0) {
             throw new Error("DB_PORT inválida.");
+        }
+
+        if (process.env.NODE_ENV === "production" && sslMode === "off") {
+            throw new Error("DB_SSL_MODE não pode ser off em produção.");
         }
 
         if (user.toLowerCase() === "root") {
@@ -78,8 +100,49 @@ class BancoMysql {
             waitForConnections: true,
             connectionLimit: 10,
             timezone: TIMEZONE,
-            ssl: useSSL ? {} : undefined,
+            ssl: this.getDbSslConfig(sslMode),
         });
+    }
+
+    private getDbSslMode(): "off" | "required" | "verify-ca" {
+        const modeRaw = process.env.DB_SSL_MODE?.trim().toLowerCase();
+        if (modeRaw) {
+            if (modeRaw === "off" || modeRaw === "required" || modeRaw === "verify-ca") {
+                return modeRaw;
+            }
+
+            throw new Error("DB_SSL_MODE inválido. Use off, required ou verify-ca.");
+        }
+
+        const legacyDbSsl = process.env.DB_SSL?.trim().toLowerCase();
+        if (legacyDbSsl === "true") {
+            return process.env.DB_SSL_REJECT_UNAUTHORIZED === "false"
+                ? "required"
+                : "verify-ca";
+        }
+
+        return "off";
+    }
+
+    private getDbSslConfig(
+        sslMode: "off" | "required" | "verify-ca"
+    ): mysql.PoolOptions["ssl"] | undefined {
+        if (sslMode === "off") {
+            return undefined;
+        }
+
+        const rejectUnauthorized = sslMode === "verify-ca";
+        const sslCaPath = process.env.DB_SSL_CA_PATH?.trim();
+
+        if (!sslCaPath) {
+            return { rejectUnauthorized };
+        }
+
+        const ca = readFileSync(sslCaPath, "utf-8");
+        return {
+            rejectUnauthorized,
+            ca,
+        };
     }
 
     private getRequiredEnv(name: string): string {
@@ -87,6 +150,18 @@ class BancoMysql {
 
         if (!value) {
             throw new Error(`Variável de ambiente obrigatória ausente: ${name}`);
+        }
+
+        return value;
+    }
+
+    private getStrongSecretEnv(name: string, minLength = 32): string {
+        const value = this.getRequiredEnv(name);
+
+        if (value.length < minLength || value.toLowerCase().includes("change_me")) {
+            throw new Error(
+                `Variável ${name} fraca. Use um segredo com pelo menos ${minLength} caracteres aleatórios.`
+            );
         }
 
         return value;
@@ -246,6 +321,337 @@ class BancoMysql {
         });
 
         return result.insertId;
+    }
+
+    async inicializarTabelasSeguranca(): Promise<void> {
+        await this.pool.execute(`
+            CREATE TABLE IF NOT EXISTS token_revogados (
+                id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                jti VARCHAR(128) NOT NULL UNIQUE,
+                expira_em DATETIME NOT NULL,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_expira_em (expira_em)
+            )
+        `);
+
+        await this.pool.execute(`
+            CREATE TABLE IF NOT EXISTS auditoria_eventos (
+                id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                evento VARCHAR(100) NOT NULL,
+                resultado VARCHAR(50) NOT NULL,
+                metadados JSON,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_evento_criado (evento, criado_em)
+            )
+        `);
+
+        await this.pool.execute(`
+            CREATE TABLE IF NOT EXISTS webhook_replay (
+                id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                replay_key_hash VARCHAR(128) NOT NULL UNIQUE,
+                expira_em DATETIME NOT NULL,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_webhook_replay_expira (expira_em)
+            )
+        `);
+
+        await this.pool.execute(`
+            CREATE TABLE IF NOT EXISTS login_lockouts (
+                attempt_key VARCHAR(191) PRIMARY KEY,
+                fail_count INT NOT NULL DEFAULT 0,
+                lock_until DATETIME NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            )
+        `);
+
+        await this.pool.execute(`
+            CREATE TABLE IF NOT EXISTS refresh_tokens (
+                id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                token_hash CHAR(64) NOT NULL UNIQUE,
+                user_id BIGINT NOT NULL,
+                family_id CHAR(36) NOT NULL,
+                expira_em DATETIME NOT NULL,
+                revogado_em DATETIME NULL,
+                substituido_por_hash CHAR(64) NULL,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_refresh_user (user_id),
+                INDEX idx_refresh_family (family_id),
+                INDEX idx_refresh_expira (expira_em)
+            )
+        `);
+    }
+
+    async revogarTokenPorJti(jti: string, expUnix: number): Promise<void> {
+        if (!jti?.trim()) {
+            throw new Error("JTI inválido.");
+        }
+
+        if (!Number.isFinite(expUnix) || expUnix <= 0) {
+            throw new Error("Expiração do token inválida.");
+        }
+
+        const expiraEm = new Date(expUnix * 1000);
+
+        await this.pool.execute(
+            `INSERT INTO token_revogados (jti, expira_em)
+             VALUES (?, ?)
+             ON DUPLICATE KEY UPDATE expira_em = VALUES(expira_em)`,
+            [jti.trim(), expiraEm]
+        );
+
+        await this.pool.execute(
+            `DELETE FROM token_revogados
+             WHERE expira_em < NOW()`
+        );
+    }
+
+    async tokenRevogado(jti: string): Promise<boolean> {
+        if (!jti?.trim()) {
+            return true;
+        }
+
+        const [rows] = await this.pool.execute<RowDataPacket[]>(
+            `SELECT 1
+             FROM token_revogados
+             WHERE jti = ?
+               AND expira_em >= NOW()
+             LIMIT 1`,
+            [jti.trim()]
+        );
+
+        return rows.length > 0;
+    }
+
+    async registrarAuditoria(
+        evento: string,
+        resultado: "sucesso" | "falha" | "negado",
+        metadados: Record<string, unknown>
+    ): Promise<void> {
+        if (!evento?.trim()) {
+            throw new Error("Evento de auditoria inválido.");
+        }
+
+        await this.pool.execute(
+            `INSERT INTO auditoria_eventos (evento, resultado, metadados)
+             VALUES (?, ?, ?)`,
+            [evento.trim(), resultado, JSON.stringify(metadados)]
+        );
+    }
+
+    async registrarWebhookReplay(replayKeyHash: string, expUnix: number): Promise<boolean> {
+        if (!replayKeyHash?.trim()) {
+            throw new Error("Replay key inválida.");
+        }
+
+        if (!Number.isFinite(expUnix) || expUnix <= 0) {
+            throw new Error("Expiração de replay inválida.");
+        }
+
+        const expiraEm = new Date(expUnix * 1000);
+
+        const [result] = await this.pool.execute<ResultSetHeader>(
+            `INSERT IGNORE INTO webhook_replay (replay_key_hash, expira_em)
+             VALUES (?, ?)`,
+            [replayKeyHash.trim(), expiraEm]
+        );
+
+        await this.pool.execute(
+            `DELETE FROM webhook_replay
+             WHERE expira_em < NOW()`
+        );
+
+        return result.affectedRows > 0;
+    }
+
+    async getLoginLockRemainingMs(attemptKey: string): Promise<number> {
+        if (!attemptKey?.trim()) {
+            return 0;
+        }
+
+        const [rows] = await this.pool.execute<LoginLockoutDB[]>(
+            `SELECT attempt_key, fail_count, lock_until
+             FROM login_lockouts
+             WHERE attempt_key = ?
+             LIMIT 1`,
+            [attemptKey.trim()]
+        );
+
+        const registro = rows[0];
+
+        if (!registro?.lock_until) {
+            return 0;
+        }
+
+        const restanteMs = new Date(registro.lock_until).getTime() - Date.now();
+
+        if (restanteMs <= 0) {
+            await this.pool.execute(
+                `DELETE FROM login_lockouts
+                 WHERE attempt_key = ?`,
+                [attemptKey.trim()]
+            );
+            return 0;
+        }
+
+        return restanteMs;
+    }
+
+    async registrarFalhaLogin(
+        attemptKey: string,
+        lockBaseMs: number,
+        lockMaxMs: number
+    ): Promise<void> {
+        if (!attemptKey?.trim()) {
+            throw new Error("Chave de tentativa inválida.");
+        }
+
+        const [rows] = await this.pool.execute<LoginLockoutDB[]>(
+            `SELECT attempt_key, fail_count, lock_until
+             FROM login_lockouts
+             WHERE attempt_key = ?
+             LIMIT 1`,
+            [attemptKey.trim()]
+        );
+
+        const atual = rows[0];
+        const failCount = (atual?.fail_count ?? 0) + 1;
+        const lockMs = Math.min(lockBaseMs * 2 ** (failCount - 1), lockMaxMs);
+        const lockUntil = new Date(Date.now() + lockMs);
+
+        await this.pool.execute(
+            `INSERT INTO login_lockouts (attempt_key, fail_count, lock_until)
+             VALUES (?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+                fail_count = VALUES(fail_count),
+                lock_until = VALUES(lock_until)`,
+            [attemptKey.trim(), failCount, lockUntil]
+        );
+    }
+
+    async resetarFalhasLogin(attemptKey: string): Promise<void> {
+        if (!attemptKey?.trim()) {
+            return;
+        }
+
+        await this.pool.execute(
+            `DELETE FROM login_lockouts
+             WHERE attempt_key = ?`,
+            [attemptKey.trim()]
+        );
+    }
+
+    private hashRefreshToken(token: string): string {
+        return createHash("sha256").update(token).digest("hex");
+    }
+
+    async criarRefreshToken(
+        token: string,
+        userId: number,
+        familyId: string,
+        expUnix: number
+    ): Promise<void> {
+        if (!token?.trim()) {
+            throw new Error("Refresh token inválido.");
+        }
+        if (!Number.isInteger(userId) || userId <= 0) {
+            throw new Error("User ID inválido para refresh token.");
+        }
+        if (!familyId?.trim()) {
+            throw new Error("Family ID inválido.");
+        }
+        if (!Number.isFinite(expUnix) || expUnix <= 0) {
+            throw new Error("Expiração de refresh token inválida.");
+        }
+
+        const tokenHash = this.hashRefreshToken(token);
+        const expiraEm = new Date(expUnix * 1000);
+
+        await this.pool.execute(
+            `INSERT INTO refresh_tokens (token_hash, user_id, family_id, expira_em)
+             VALUES (?, ?, ?, ?)`,
+            [tokenHash, userId, familyId.trim(), expiraEm]
+        );
+    }
+
+    async buscarRefreshToken(token: string): Promise<RefreshTokenDB | null> {
+        if (!token?.trim()) {
+            return null;
+        }
+
+        const tokenHash = this.hashRefreshToken(token);
+
+        const [rows] = await this.pool.execute<RefreshTokenDB[]>(
+            `SELECT id, token_hash, user_id, family_id, expira_em, revogado_em, substituido_por_hash
+             FROM refresh_tokens
+             WHERE token_hash = ?
+             LIMIT 1`,
+            [tokenHash]
+        );
+
+        return rows[0] ?? null;
+    }
+
+    async rotacionarRefreshToken(
+        oldToken: string,
+        newToken: string,
+        expUnix: number
+    ): Promise<boolean> {
+        const old = await this.buscarRefreshToken(oldToken);
+
+        if (!old) {
+            return false;
+        }
+
+        if (old.revogado_em || new Date(old.expira_em).getTime() < Date.now()) {
+            return false;
+        }
+
+        const newHash = this.hashRefreshToken(newToken);
+        const oldHash = this.hashRefreshToken(oldToken);
+        const expiraEm = new Date(expUnix * 1000);
+
+        await this.pool.execute(
+            `UPDATE refresh_tokens
+             SET revogado_em = NOW(), substituido_por_hash = ?
+             WHERE token_hash = ?
+               AND revogado_em IS NULL`,
+            [newHash, oldHash]
+        );
+
+        await this.pool.execute(
+            `INSERT INTO refresh_tokens (token_hash, user_id, family_id, expira_em)
+             VALUES (?, ?, ?, ?)`,
+            [newHash, old.user_id, old.family_id, expiraEm]
+        );
+
+        return true;
+    }
+
+    async revogarRefreshToken(token: string): Promise<void> {
+        if (!token?.trim()) {
+            return;
+        }
+
+        const tokenHash = this.hashRefreshToken(token);
+        await this.pool.execute(
+            `UPDATE refresh_tokens
+             SET revogado_em = COALESCE(revogado_em, NOW())
+             WHERE token_hash = ?`,
+            [tokenHash]
+        );
+    }
+
+    async revogarFamiliaRefreshToken(familyId: string): Promise<void> {
+        if (!familyId?.trim()) {
+            return;
+        }
+
+        await this.pool.execute(
+            `UPDATE refresh_tokens
+             SET revogado_em = COALESCE(revogado_em, NOW())
+             WHERE family_id = ?`,
+            [familyId.trim()]
+        );
     }
 
     mapearEtapa(statusId: number): string {

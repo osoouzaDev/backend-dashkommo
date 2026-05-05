@@ -41,3 +41,49 @@ CREATE TABLE funil_vendas (
  INDEX idx_status (status_id),
  INDEX idx_data (data_criacao)
 );
+
+CREATE TABLE IF NOT EXISTS token_revogados (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    jti VARCHAR(128) NOT NULL UNIQUE,
+    expira_em DATETIME NOT NULL,
+    criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_expira_em (expira_em)
+);
+
+CREATE TABLE IF NOT EXISTS auditoria_eventos (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    evento VARCHAR(100) NOT NULL,
+    resultado VARCHAR(50) NOT NULL,
+    metadados JSON,
+    criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_evento_criado (evento, criado_em)
+);
+
+CREATE TABLE IF NOT EXISTS webhook_replay (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    replay_key_hash VARCHAR(128) NOT NULL UNIQUE,
+    expira_em DATETIME NOT NULL,
+    criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_webhook_replay_expira (expira_em)
+);
+
+CREATE TABLE IF NOT EXISTS login_lockouts (
+    attempt_key VARCHAR(191) PRIMARY KEY,
+    fail_count INT NOT NULL DEFAULT 0,
+    lock_until DATETIME NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    token_hash CHAR(64) NOT NULL UNIQUE,
+    user_id BIGINT NOT NULL,
+    family_id CHAR(36) NOT NULL,
+    expira_em DATETIME NOT NULL,
+    revogado_em DATETIME NULL,
+    substituido_por_hash CHAR(64) NULL,
+    criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_refresh_user (user_id),
+    INDEX idx_refresh_family (family_id),
+    INDEX idx_refresh_expira (expira_em)
+);
