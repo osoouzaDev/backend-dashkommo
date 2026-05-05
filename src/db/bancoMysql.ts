@@ -712,25 +712,59 @@ class BancoMysql {
         return consultores[consultorId] ?? null;
     }
 
+    private normalizarNomeCampo(valor: string): string {
+        return valor
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .trim()
+            .toLowerCase();
+    }
+
+    private extrairValorCampo(campo: any): string | null {
+        if (!Array.isArray(campo?.values) || campo.values.length === 0) {
+            return null;
+        }
+
+        const primeiro = campo.values[0];
+        const valorBruto =
+            typeof primeiro === "string"
+                ? primeiro
+                : typeof primeiro === "object" && primeiro !== null
+                  ? (primeiro as { value?: unknown }).value
+                  : null;
+
+        if (valorBruto === null || valorBruto === undefined) {
+            return null;
+        }
+
+        const texto = typeof valorBruto === "string" ? valorBruto : String(valorBruto);
+        return texto.trim() || null;
+    }
+
     private extrairCampoCustomizado(lead: any, nomeCampo: string): string | null {
         if (!Array.isArray(lead?.custom_fields)) {
             return null;
         }
 
-        const campo = lead.custom_fields.find((field: any) => field.name === nomeCampo);
+        const alvo = this.normalizarNomeCampo(nomeCampo);
+        const campo = lead.custom_fields.find(
+            (field: any) =>
+                typeof field?.name === "string" &&
+                this.normalizarNomeCampo(field.name) === alvo
+        );
 
-        if (!campo?.values?.length) {
-            return null;
+        return this.extrairValorCampo(campo);
+    }
+
+    private extrairCampoCustomizadoPorNomes(lead: any, nomesCampo: string[]): string | null {
+        for (const nome of nomesCampo) {
+            const valor = this.extrairCampoCustomizado(lead, nome);
+            if (valor) {
+                return valor;
+            }
         }
 
-        const valor = campo.values[0]?.value;
-
-        if (valor === null || valor === undefined) {
-            return null;
-        }
-
-        const texto = typeof valor === "string" ? valor : String(valor);
-        return texto.trim() || null;
+        return null;
     }
 
     async processarLead(lead: any): Promise<void> {
@@ -800,8 +834,12 @@ class BancoMysql {
                     : null;
 
             const origem =
-                this.extrairCampoCustomizado(lead, "Origem do lead") ??
-                "Não qualificado";
+                this.extrairCampoCustomizadoPorNomes(lead, [
+                    "Origem do lead",
+                    "ORIGEM DO LEAD",
+                    "Origem TXT",
+                    "ORIGEM",
+                ]) ?? "Não qualificado";
 
             await this.pool.execute(
                 `INSERT INTO funil_vendas
