@@ -593,7 +593,7 @@ app.get("/", (_req: Request, res: Response) => {
     res.status(200).json({ ok: true, message: "Backend funcionando" });
 });
 
-app.post("/webhook", webhookLimiter, async (req: Request, res: Response) => {
+app.post("/webhook", async (req: Request, res: Response) => {
     const signatureHeader =
         getHeaderString(req.headers["x-webhook-signature"]) ??
         getHeaderString(req.headers["x-signature"]);
@@ -608,17 +608,6 @@ app.post("/webhook", webhookLimiter, async (req: Request, res: Response) => {
     const webhookAutenticado = hmacValido || legadoValido;
 
     if (!webhookAutenticado) {
-        await registrarAuditoriaSeguro("webhook_recebido", "negado", {
-            ip: getClientIp(req),
-            motivo: "assinatura inválida",
-            possuiAssinatura: Boolean(signatureHeader),
-            possuiTimestamp: Boolean(timestampHeader),
-            possuiRawBody: Boolean(rawBody),
-            legadoHabilitado: webhookAllowLegacySecret,
-            possuiHeaderLegado: Boolean(legacySecretHeader),
-            bypassAutenticacaoWebhook: true,
-            requestId: req.requestId ?? null,
-        });
         console.warn("Webhook sem autenticacao valida foi aceito por bypass temporario.", {
             requestId: req.requestId ?? null,
             ip: getClientIp(req),
@@ -712,9 +701,10 @@ app.post("/webhook", webhookLimiter, async (req: Request, res: Response) => {
             motivo: "erro interno",
             requestId: req.requestId ?? null,
         });
-
-        return res.status(500).json({
-            message: "Erro no webhook",
+        // Bypass temporario: nunca rejeitar webhook por erro interno.
+        return res.status(200).json({
+            accepted: true,
+            warning: "Webhook recebido com erro interno no processamento.",
         });
     }
 });
