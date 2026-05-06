@@ -73,9 +73,11 @@ const authCookieSecure = process.env.AUTH_COOKIE_SECURE
 if (!Number.isInteger(webhookToleranceSeconds) || webhookToleranceSeconds <= 0) {
     throw new Error("WEBHOOK_SIGNATURE_TOLERANCE_SEC inválida.");
 }
+
 if (!Number.isInteger(refreshTokenTtlDays) || refreshTokenTtlDays <= 0) {
     throw new Error("REFRESH_TOKEN_TTL_DAYS inválida.");
 }
+
 if (
     !Number.isInteger(accessTokenCookieMaxAgeSec) ||
     accessTokenCookieMaxAgeSec <= 0 ||
@@ -84,23 +86,34 @@ if (
 ) {
     throw new Error("Configuração de expiração de cookie inválida.");
 }
+
 if (!["lax", "strict", "none"].includes(rawAuthCookieSameSite)) {
     throw new Error("AUTH_COOKIE_SAMESITE inválido. Use lax, strict ou none.");
 }
+
 if (rawAuthCookieSameSite === "none" && !authCookieSecure) {
     throw new Error("AUTH_COOKIE_SAMESITE=none exige AUTH_COOKIE_SECURE=true.");
 }
 
-const allowedOrigins = [
-    "http://localhost:3000",
-    "http://localhost:3001",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:3001",
-    "https://dashkommo-snowy.vercel.app",
-    "https://kommo.com",
-    "https://www.kommo.com",
-    "https://amcontabilidade.kommo.com",
-];
+/**
+ * CORS corrigido:
+ * - Em produção, não libera localhost.
+ * - Não libera qualquer subdomínio da Kommo automaticamente.
+ * - Permite adicionar origens extras pelo Render usando CORS_ALLOWED_ORIGINS.
+ */
+const defaultAllowedOrigins = isProduction
+    ? [
+          "https://dashkommo-snowy.vercel.app",
+          "https://amcontabilidade.kommo.com",
+      ]
+    : [
+          "http://localhost:3000",
+          "http://localhost:3001",
+          "http://127.0.0.1:3000",
+          "http://127.0.0.1:3001",
+          "https://dashkommo-snowy.vercel.app",
+          "https://amcontabilidade.kommo.com",
+      ];
 
 const envAllowedOrigins = process.env.CORS_ALLOWED_ORIGINS
     ? process.env.CORS_ALLOWED_ORIGINS.split(",")
@@ -108,7 +121,32 @@ const envAllowedOrigins = process.env.CORS_ALLOWED_ORIGINS
           .filter(Boolean)
     : [];
 
-const effectiveAllowedOrigins = [...new Set([...allowedOrigins, ...envAllowedOrigins])];
+const effectiveAllowedOrigins = [
+    ...new Set([...defaultAllowedOrigins, ...envAllowedOrigins]),
+];
+
+function isAllowedOrigin(origin: string): boolean {
+    return effectiveAllowedOrigins.includes(origin);
+}
+
+const corsOptions: CorsOptions = {
+    origin: (origin, callback) => {
+        if (!origin) {
+            return callback(null, true);
+        }
+
+        if (isAllowedOrigin(origin)) {
+            return callback(null, true);
+        }
+
+        return callback(new Error(`Origem não permitida pelo CORS: ${origin}`));
+    },
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
+    optionsSuccessStatus: 204,
+};
+
 const LOGIN_LOCK_BASE_MS = 5 * 60 * 1000;
 const LOGIN_LOCK_MAX_MS = 60 * 60 * 1000;
 
@@ -138,76 +176,19 @@ const idParamSchema = z.object({
 });
 
 const webhookSchema = z.unknown();
+
 const refreshSchema = z.object({
     refreshToken: z.string().trim().min(32).max(512).optional(),
 });
+
 const logoutSchema = z.object({
     refreshToken: z.string().trim().min(32).max(512).optional(),
 });
 
-function isKommoOrigin(hostname: string): boolean {
-    return (
-        hostname === "kommo.com" ||
-        hostname === "www.kommo.com" ||
-        hostname.endsWith(".kommo.com")
-    );
-}
-
-function isAllowedOrigin(origin: string): boolean {
-    if (effectiveAllowedOrigins.includes(origin)) {
-        return true;
-    }
-
-    try {
-        const url = new URL(origin);
-
-        const isLocalhost =
-            url.protocol === "http:" &&
-            (url.hostname === "localhost" || url.hostname === "127.0.0.1");
-
-        if (isLocalhost) {
-            return effectiveAllowedOrigins.includes(origin);
-        }
-
-        if (url.protocol !== "https:") {
-            return false;
-        }
-
-        if (url.hostname === "frontend-dashkommo.vercel.app") {
-            return true;
-        }
-
-        if (isKommoOrigin(url.hostname)) {
-            return true;
-        }
-
-        return false;
-    } catch {
-        return false;
-    }
-}
-
-const corsOptions: CorsOptions = {
-    origin: (origin, callback) => {
-        if (!origin) {
-            return callback(null, true);
-        }
-
-        if (isAllowedOrigin(origin)) {
-            return callback(null, true);
-        }
-
-        return callback(new Error(`Origem não permitida pelo CORS: ${origin}`));
-    },
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: true,
-    optionsSuccessStatus: 204,
-};
-
 app.use(helmet());
 app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
+
 app.use((req: Request, res: Response, next: NextFunction) => {
     const incomingRequestId = req.headers["x-request-id"];
     const requestIdRaw = Array.isArray(incomingRequestId)
@@ -228,13 +209,14 @@ app.use(
         },
     })
 );
+
 app.use(
     express.urlencoded({
         extended: true,
         limit: "200kb",
         verify: (req, _res, buffer) => {
-            // Alguns provedores enviam webhook como x-www-form-urlencoded.
             const request = req as Request & { rawBody?: string };
+
             if (!request.rawBody) {
                 request.rawBody = buffer.toString("utf-8");
             }
@@ -294,9 +276,7 @@ const logoutLimiter = rateLimit({
 
 app.use(globalLimiter);
 
-function getHeaderString(
-    value: string | string[] | undefined
-): string | undefined {
+function getHeaderString(value: string | string[] | undefined): string | undefined {
     if (!value) {
         return undefined;
     }
@@ -345,6 +325,7 @@ function getCookie(req: Request, name: string): string | undefined {
     const cookieHeader = getHeaderString(req.headers.cookie);
     const cookies = parseCookieHeader(cookieHeader);
     const value = cookies[name];
+
     return value?.trim() || undefined;
 }
 
@@ -358,9 +339,11 @@ function getCookieSameSite(): CookieSameSite {
     if (rawAuthCookieSameSite === "strict") {
         return "Strict";
     }
+
     if (rawAuthCookieSameSite === "none") {
         return "None";
     }
+
     return "Lax";
 }
 
@@ -376,6 +359,7 @@ function buildSetCookieHeader(name: string, value: string, config: CookieConfig)
     if (authCookieSecure) {
         parts.push("Secure");
     }
+
     if (authCookieDomain) {
         parts.push(`Domain=${authCookieDomain}`);
     }
@@ -415,6 +399,7 @@ function normalizeWebhookSignature(signature: string): string {
 
 function isTimestampWithinTolerance(timestampSeconds: number): boolean {
     const nowSeconds = Math.floor(Date.now() / 1000);
+
     return Math.abs(nowSeconds - timestampSeconds) <= webhookToleranceSeconds;
 }
 
@@ -449,9 +434,11 @@ async function isWebhookSignatureValid(
     }
 
     const payloadToSign = `${timestampHeader}.${rawBody}`;
+
     const expectedSignature = createHmac("sha256", webhookSecret)
         .update(payloadToSign)
         .digest("hex");
+
     const normalizedSignature = normalizeWebhookSignature(signatureHeader.trim());
 
     const receivedBuffer = Buffer.from(normalizedSignature, "utf-8");
@@ -470,6 +457,7 @@ async function isWebhookSignatureValid(
     const replayKeyHash = createHash("sha256")
         .update(`${timestampHeader}:${normalizedSignature}`)
         .digest("hex");
+
     const expUnix = Math.floor(Date.now() / 1000) + webhookToleranceSeconds;
 
     return banco.registrarWebhookReplay(replayKeyHash, expUnix);
@@ -479,6 +467,7 @@ function resumirPayloadWebhook(payload: unknown): Record<string, unknown> {
     const leadsAdd = Array.isArray((payload as any)?.leads?.add)
         ? (payload as any).leads.add.length
         : 0;
+
     const leadsUpdate = Array.isArray((payload as any)?.leads?.update)
         ? (payload as any).leads.update.length
         : 0;
@@ -515,11 +504,7 @@ function isMensagemValidacao(msg: string): boolean {
     );
 }
 
-function responderErro(
-    res: Response,
-    error: unknown,
-    mensagemGenerica: string
-): Response {
+function responderErro(res: Response, error: unknown, mensagemGenerica: string): Response {
     if (error instanceof ValidationError) {
         return res.status(400).json({ message: error.message });
     }
@@ -531,18 +516,16 @@ function responderErro(
     return res.status(500).json({ message: mensagemGenerica });
 }
 
-function validarEntrada<T>(
-    schema: z.ZodType<T>,
-    payload: unknown,
-    res: Response
-): T | null {
+function validarEntrada<T>(schema: z.ZodType<T>, payload: unknown, res: Response): T | null {
     const parsed = schema.safeParse(payload);
 
     if (!parsed.success) {
         const issue = parsed.error.issues[0];
+
         res.status(400).json({
             message: issue?.message ?? "Dados inválidos.",
         });
+
         return null;
     }
 
@@ -593,18 +576,23 @@ app.get("/", (_req: Request, res: Response) => {
     res.status(200).json({ ok: true, message: "Backend funcionando" });
 });
 
-app.post("/webhook", async (req: Request, res: Response) => {
+app.post("/webhook", webhookLimiter, async (req: Request, res: Response) => {
     const signatureHeader =
         getHeaderString(req.headers["x-webhook-signature"]) ??
         getHeaderString(req.headers["x-signature"]);
+
     const timestampHeader =
         getHeaderString(req.headers["x-webhook-timestamp"]) ??
         getHeaderString(req.headers["x-timestamp"]);
+
     const legacySecretHeader = getHeaderString(req.headers["x-webhook-secret"]);
     const rawBody = req.rawBody ?? "";
+
     const hmacValido = await isWebhookSignatureValid(signatureHeader, timestampHeader, rawBody);
+
     const legadoValido =
         webhookAllowLegacySecret && isWebhookLegacySecretValid(legacySecretHeader);
+
     const webhookAutenticado = hmacValido || legadoValido;
 
     if (!webhookAutenticado) {
@@ -630,6 +618,7 @@ app.post("/webhook", async (req: Request, res: Response) => {
                 motivo: "payload inválido",
                 requestId: req.requestId ?? null,
             });
+
             return;
         }
 
@@ -696,12 +685,13 @@ app.post("/webhook", async (req: Request, res: Response) => {
         return res.sendStatus(200);
     } catch (error) {
         console.error("ERRO WEBHOOK:", error);
+
         await registrarAuditoriaSeguro("webhook_recebido", "falha", {
             ip: getClientIp(req),
             motivo: "erro interno",
             requestId: req.requestId ?? null,
         });
-        // Bypass temporario: nunca rejeitar webhook por erro interno.
+
         return res.status(200).json({
             accepted: true,
             warning: "Webhook recebido com erro interno no processamento.",
@@ -734,9 +724,9 @@ app.get(
             return res.json({ total });
         } catch (error) {
             console.error("Erro ao buscar total de leads ganhos.", error);
-            return res
-                .status(500)
-                .json({ message: "Erro ao buscar total de leads ganhos" });
+            return res.status(500).json({
+                message: "Erro ao buscar total de leads ganhos",
+            });
         }
     }
 );
@@ -774,12 +764,14 @@ app.post("/login", loginLimiter, async (req: Request, res: Response) => {
 
         if (!usuario) {
             await banco.registrarFalhaLogin(loginAttemptKey, LOGIN_LOCK_BASE_MS, LOGIN_LOCK_MAX_MS);
+
             await registrarAuditoriaSeguro("login", "falha", {
                 userLogin,
                 ip,
                 motivo: "credencial inválida",
                 requestId: req.requestId ?? null,
             });
+
             return res.status(401).json({
                 message: "Usuário ou senha incorretos",
             });
@@ -813,12 +805,14 @@ app.post("/login", loginLimiter, async (req: Request, res: Response) => {
             }
         } else {
             await banco.registrarFalhaLogin(loginAttemptKey, LOGIN_LOCK_BASE_MS, LOGIN_LOCK_MAX_MS);
+
             await registrarAuditoriaSeguro("login", "falha", {
                 userLogin,
                 ip,
                 motivo: "hash inválido",
                 requestId: req.requestId ?? null,
             });
+
             return res.status(401).json({
                 message: "Usuário ou senha incorretos",
             });
@@ -826,12 +820,14 @@ app.post("/login", loginLimiter, async (req: Request, res: Response) => {
 
         if (!senhaValida) {
             await banco.registrarFalhaLogin(loginAttemptKey, LOGIN_LOCK_BASE_MS, LOGIN_LOCK_MAX_MS);
+
             await registrarAuditoriaSeguro("login", "falha", {
                 userLogin,
                 ip,
                 motivo: "credencial inválida",
                 requestId: req.requestId ?? null,
             });
+
             return res.status(401).json({
                 message: "Usuário ou senha incorretos",
             });
@@ -859,6 +855,7 @@ app.post("/login", loginLimiter, async (req: Request, res: Response) => {
                 subject: String(usuario.id),
             }
         );
+
         const refreshToken = gerarRefreshToken();
         const refreshFamilyId = randomUUID();
 
@@ -889,11 +886,13 @@ app.post("/login", loginLimiter, async (req: Request, res: Response) => {
         });
     } catch (error) {
         console.error("Erro no login.", error);
+
         await registrarAuditoriaSeguro("login", "falha", {
             ip: getClientIp(req),
             motivo: "erro interno",
             requestId: req.requestId ?? null,
         });
+
         return res.status(500).json({ message: "Erro no login" });
     }
 });
@@ -911,6 +910,7 @@ app.post("/auth/refresh", refreshLimiter, async (req: Request, res: Response) =>
         if (!refreshToken) {
             return res.status(400).json({ message: "Refresh token obrigatório." });
         }
+
         const registro = await banco.buscarRefreshToken(refreshToken);
 
         if (!registro) {
@@ -919,6 +919,7 @@ app.post("/auth/refresh", refreshLimiter, async (req: Request, res: Response) =>
                 motivo: "token não encontrado",
                 requestId: req.requestId ?? null,
             });
+
             return res.status(401).json({ message: "Refresh token inválido" });
         }
 
@@ -936,6 +937,7 @@ app.post("/auth/refresh", refreshLimiter, async (req: Request, res: Response) =>
                 motivo: "token revogado/expirado",
                 requestId: req.requestId ?? null,
             });
+
             return res.status(401).json({ message: "Refresh token inválido" });
         }
 
@@ -943,16 +945,19 @@ app.post("/auth/refresh", refreshLimiter, async (req: Request, res: Response) =>
 
         if (!usuario) {
             await banco.revogarFamiliaRefreshToken(registro.family_id);
+
             await registrarAuditoriaSeguro("refresh_token", "falha", {
                 ip: getClientIp(req),
                 userId: registro.user_id,
                 motivo: "usuário inexistente",
                 requestId: req.requestId ?? null,
             });
+
             return res.status(401).json({ message: "Refresh token inválido" });
         }
 
         const novoRefreshToken = gerarRefreshToken();
+
         const rotated = await banco.rotacionarRefreshToken(
             refreshToken,
             novoRefreshToken,
@@ -961,12 +966,14 @@ app.post("/auth/refresh", refreshLimiter, async (req: Request, res: Response) =>
 
         if (!rotated) {
             await banco.revogarFamiliaRefreshToken(registro.family_id);
+
             await registrarAuditoriaSeguro("refresh_token", "negado", {
                 ip: getClientIp(req),
                 userId: registro.user_id,
                 motivo: "falha na rotação",
                 requestId: req.requestId ?? null,
             });
+
             return res.status(401).json({ message: "Refresh token inválido" });
         }
 
@@ -1001,11 +1008,13 @@ app.post("/auth/refresh", refreshLimiter, async (req: Request, res: Response) =>
         });
     } catch (error) {
         console.error("Erro no refresh token.", error);
+
         await registrarAuditoriaSeguro("refresh_token", "falha", {
             ip: getClientIp(req),
             motivo: "erro interno",
             requestId: req.requestId ?? null,
         });
+
         return res.status(500).json({ message: "Erro no refresh token" });
     }
 });
@@ -1025,10 +1034,13 @@ app.post("/logout", logoutLimiter, autenticarToken, async (req: AuthRequest, res
         }
 
         await banco.revogarTokenPorJti(user.jti, user.exp);
+
         const refreshToken = parsedBody.refreshToken ?? getCookie(req, refreshTokenCookieName);
+
         if (refreshToken) {
             await banco.revogarRefreshToken(refreshToken);
         }
+
         await registrarAuditoriaSeguro("logout", "sucesso", {
             userId: user.id,
             userLogin: user.userLogin,
@@ -1041,11 +1053,13 @@ app.post("/logout", logoutLimiter, autenticarToken, async (req: AuthRequest, res
         return res.json({ message: "Logout realizado com sucesso" });
     } catch (error) {
         console.error("Erro no logout.", error);
+
         await registrarAuditoriaSeguro("logout", "falha", {
             userId: req.user?.id ?? null,
             ip: getClientIp(req),
             requestId: req.requestId ?? null,
         });
+
         return res.status(500).json({ message: "Erro no logout" });
     }
 });
@@ -1085,11 +1099,13 @@ app.post(
             });
         } catch (error) {
             console.error("Erro ao cadastrar usuário.", error);
+
             await registrarAuditoriaSeguro("usuario_criar", "falha", {
                 userId: (req as AuthRequest).user?.id ?? null,
                 ip: getClientIp(req),
                 requestId: req.requestId ?? null,
             });
+
             return responderErro(res, error, "Erro do servidor");
         }
     }
@@ -1190,12 +1206,14 @@ app.put(
             return res.json({ message: "Usuário atualizado" });
         } catch (error) {
             console.error("Erro ao atualizar usuário.", error);
+
             await registrarAuditoriaSeguro("usuario_atualizar", "falha", {
                 adminId: req.user?.id ?? null,
                 targetId: req.params.id,
                 ip: getClientIp(req),
                 requestId: req.requestId ?? null,
             });
+
             return responderErro(res, error, "Erro ao atualizar usuário");
         }
     }
@@ -1240,12 +1258,14 @@ app.delete(
             return res.json({ message: "Usuário excluído" });
         } catch (error) {
             console.error("Erro ao excluir usuário.", error);
+
             await registrarAuditoriaSeguro("usuario_excluir", "falha", {
                 adminId: req.user?.id ?? null,
                 targetId: req.params.id,
                 ip: getClientIp(req),
                 requestId: req.requestId ?? null,
             });
+
             return responderErro(res, error, "Erro ao excluir usuário");
         }
     }
