@@ -36,6 +36,14 @@ src/
   main.ts
 ```
 
+Projeto adicional (NestJS) em pasta separada:
+
+```txt
+nest-backend/
+```
+
+Esse app NestJS foi criado para integrar com Supabase Postgres (webhook + consulta). Veja `nest-backend/README.md`.
+
 ## Requisitos
 
 - Node.js 20+ (recomendado 22)

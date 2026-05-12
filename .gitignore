@@ -6,3 +6,6 @@ dist/
 .github
 security.yml
 certs
+markdown
+*.md
+nest-backend
