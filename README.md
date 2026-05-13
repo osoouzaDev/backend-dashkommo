@@ -1,6 +1,15 @@
 # Backend DashKommo
 
-API backend em Node.js + TypeScript para autenticacao, gestao de usuarios (com perfil admin), ingestao de webhook e relatorios.
+API backend principal do projeto em `Node.js + TypeScript + Express`, responsável por autenticação, usuários, ingestão de webhook da Kommo e relatórios.
+
+## Arquitetura Atual
+
+Este repositório tem dois backends:
+
+- `src/`: backend principal em `Express`, usado pelo sistema atual.
+- `nest-backend/`: backend separado em `NestJS`, criado sem remover nada do projeto original.
+
+O banco real do projeto é `MySQL` hospedado no `Aiven`, com conexão via `mysql2/promise`.
 
 ## Stack
 
@@ -9,99 +18,127 @@ API backend em Node.js + TypeScript para autenticacao, gestao de usuarios (com p
 - Express
 - MySQL (`mysql2/promise`)
 - JWT (`jsonwebtoken`)
-- Hash de senha com `argon2` (e migracao de hashes legados)
-- Validacao de entrada com `zod`
+- `argon2` com suporte a hashes legados em `bcrypt`
+- `zod`
+- `helmet`
+- `express-rate-limit`
 
 ## Funcionalidades
 
-- Login com `token` (access token) e `refreshToken` rotativo
-- Logout com revogacao de token (`jti`) persistente em banco
-- Controle de acesso por perfil (`administrador` e `usuario`)
-- Protecao de webhook por assinatura HMAC (com opcao de legado por flag)
-- Anti-replay de webhook (persistente em banco)
-- Rate limit global e por rotas sensiveis
-- Auditoria de eventos de seguranca
+- Login com `access token` e `refresh token` rotativo
+- Logout com revogação persistente de `jti`
+- CRUD de usuários com controle de acesso por perfil
+- Recebimento e processamento de webhook da Kommo
+- Anti-replay para webhook
+- Relatórios sobre o `funil_vendas`
+- Auditoria de eventos de segurança
 
-## Estrutura de pastas
+## Estrutura de Pastas
 
 ```txt
 src/
+  config/
+    cors.ts
+    env.ts
+    rateLimit.ts
   db/
     bancoMysql.ts
   middlewares/
     auth.ts
     autorizarAdmin.ts
+    errorHandler.ts
+  routes/
+    auth.ts
+    health.ts
+    reports.ts
+    users.ts
+    webhook.ts
+  schemas/
+    index.ts
+  services/
+    auditoria.ts
+    auth.ts
+    webhook.ts
   types/
     express.d.ts
+  utils/
+    cookies.ts
+    request.ts
+    validation.ts
+  app.ts
   main.ts
 ```
 
-Projeto adicional (NestJS) em pasta separada:
+## Responsabilidades dos Arquivos Principais
 
-```txt
-nest-backend/
-```
-
-Esse app NestJS foi criado para integrar com Supabase Postgres (webhook + consulta). Veja `nest-backend/README.md`.
+- `src/main.ts`: bootstrap do servidor.
+- `src/app.ts`: cria e configura a aplicação Express.
+- `src/db/bancoMysql.ts`: conexão com MySQL e regras de persistência.
+- `src/routes/`: define as rotas HTTP por domínio.
+- `src/services/`: concentra lógica reutilizável de auth, auditoria e webhook.
+- `src/config/`: centraliza env, CORS e rate limits.
 
 ## Requisitos
 
 - Node.js 20+ (recomendado 22)
-- Banco MySQL acessivel
-- Variaveis de ambiente configuradas
+- Banco MySQL acessível
+- Variáveis de ambiente configuradas
 
-## Instalacao
+## Instalação
 
 ```bash
 npm install
 ```
 
-## Variaveis de ambiente
+## Variáveis de Ambiente
 
-Use `.env` local (nao versionar) e mantenha `.env.example` no repositorio.
+Use `.env` local e mantenha `.env.example` no repositório apenas com placeholders.
 
-Variaveis principais:
+Principais variáveis:
 
-- `PORT` (ex.: `8000`)
+- `PORT`
 - `DB_HOST`
 - `DB_PORT`
 - `DB_USER`
 - `DB_PASSWORD`
 - `DB_NAME`
-- `DB_SSL` (legado; prefira `DB_SSL_MODE`)
-- `DB_SSL_REJECT_UNAUTHORIZED` (legado; usado com `DB_SSL=true`)
-- `DB_SSL_MODE` (`off`, `required` ou `verify-ca`)
-- `DB_SSL_CA_PEM` (recomendado no Render; CA em PEM, aceita `\n`)
-- `DB_SSL_CA_PATH` (opcional, caminho para CA customizado)
-- `JWT_SECRET` (segredo forte, minimo 32 chars)
+- `DB_SSL`
+- `DB_SSL_REJECT_UNAUTHORIZED`
+- `DB_SSL_MODE` (`off`, `required`, `verify-ca`)
+- `DB_SSL_CA_PEM`
+- `DB_SSL_CA_PATH`
+- `JWT_SECRET`
 - `JWT_ISSUER`
 - `JWT_AUDIENCE`
-- `PASSWORD_PEPPER` (segredo forte, minimo 32 chars)
-- `WEBHOOK_SECRET` (segredo forte, minimo 32 chars)
-- `WEBHOOK_SIGNATURE_TOLERANCE_SEC` (ex.: `300`)
-- `WEBHOOK_ALLOW_LEGACY_SECRET` (`false` recomendado apos migracao)
-- `REFRESH_TOKEN_TTL_DAYS` (ex.: `30`)
-- `AUTH_COOKIES_ENABLED` (`true` para habilitar cookie HttpOnly)
-- `ACCESS_TOKEN_COOKIE_NAME` / `REFRESH_TOKEN_COOKIE_NAME`
-- `ACCESS_TOKEN_COOKIE_MAX_AGE_SEC` / `REFRESH_TOKEN_COOKIE_MAX_AGE_SEC`
-- `AUTH_COOKIE_DOMAIN` (opcional)
-- `AUTH_COOKIE_SAMESITE` (`lax`, `strict` ou `none`)
-- `AUTH_COOKIE_SECURE` (`true` em producao; obrigatorio com `SameSite=None`)
+- `PASSWORD_PEPPER`
+- `WEBHOOK_SECRET`
+- `WEBHOOK_SIGNATURE_TOLERANCE_SEC`
+- `WEBHOOK_ALLOW_LEGACY_SECRET`
+- `REFRESH_TOKEN_TTL_DAYS`
+- `AUTH_COOKIES_ENABLED`
+- `ACCESS_TOKEN_COOKIE_NAME`
+- `REFRESH_TOKEN_COOKIE_NAME`
+- `ACCESS_TOKEN_COOKIE_MAX_AGE_SEC`
+- `REFRESH_TOKEN_COOKIE_MAX_AGE_SEC`
+- `AUTH_COOKIE_DOMAIN`
+- `AUTH_COOKIE_SAMESITE`
+- `AUTH_COOKIE_SECURE`
+- `CORS_ALLOWED_ORIGINS`
 
-## Certificado CA (MySQL SSL)
+## SSL/CA do Aiven
 
-Se seu provedor exigir CA customizado:
+Para MySQL com Aiven, o recomendado é:
 
-1. Preferencial (Render): usar env `DB_SSL_CA_PEM` com o conteudo completo do certificado PEM.
-2. Opcional: salvar em arquivo e usar `DB_SSL_CA_PATH`.
+- `DB_SSL_MODE=verify-ca`
+- `DB_SSL_CA_PEM` com o certificado PEM completo
 
-Exemplo de `DB_SSL_CA_PEM`:
+Exemplo:
 
 ```env
 DB_SSL_CA_PEM=-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----
 ```
 
-Opcao alternativa com arquivo:
+Alternativa local com arquivo:
 
 ```powershell
 $env:NODE_EXTRA_CA_CERTS='C:\caminho\para\certs\ca.pem'
@@ -112,28 +149,29 @@ npm run dev
 
 ```bash
 npm run dev
+npm run dev:ca-file
 npm run build
 npm start
 ```
 
-## Subindo o projeto
+## Como Rodar
 
-Dev:
+Desenvolvimento:
 
 ```bash
 npm run dev
 ```
 
-Producao:
+Produção:
 
 ```bash
 npm run build
 npm start
 ```
 
-## Rotas principais
+## Rotas Principais
 
-Publicas:
+Públicas:
 
 - `GET /`
 - `POST /login`
@@ -143,102 +181,94 @@ Publicas:
 Protegidas:
 
 - `POST /logout`
-- `GET /relatorio` (admin)
-- `GET /relatorio/total-ganho` (admin)
-- `POST /usuarios` (admin)
-- `GET /usuarios` (admin)
-- `GET /usuarios/:id` (admin)
-- `PUT /usuarios/:id` (admin)
-- `DELETE /usuarios/:id` (admin)
+- `GET /relatorio`
+- `GET /relatorio/total-ganho`
+- `POST /usuarios`
+- `GET /usuarios`
+- `GET /usuarios/:id`
+- `PUT /usuarios/:id`
+- `DELETE /usuarios/:id`
 
-## Fluxo de autenticacao
+## Fluxo de Autenticação
 
-1. `POST /login` retorna:
-   - `token` (access token)
-   - `refreshToken`
-2. Se `AUTH_COOKIES_ENABLED=true`, os mesmos tokens tambem sao enviados via cookie `HttpOnly`.
-3. Use `Authorization: Bearer <token>` nas rotas protegidas (ou cookie quando habilitado).
-4. Quando o access token expirar, use `POST /auth/refresh` com:
-   - `{ "refreshToken": "..." }`
-   - ou sem body quando `refresh_token` estiver em cookie
-5. No logout, envie:
-   - Header `Authorization: Bearer <token>`
-   - Body `{ "refreshToken": "..." }`
-   - ou apenas cookie quando auth por cookie estiver habilitada
+1. `POST /login` retorna `token` e `refreshToken`.
+2. Se `AUTH_COOKIES_ENABLED=true`, os tokens também são enviados em cookie `HttpOnly`.
+3. As rotas protegidas aceitam `Authorization: Bearer <token>` ou cookie.
+4. O refresh é feito em `POST /auth/refresh`.
+5. O logout revoga `access token` e `refresh token`.
 
-## Webhook com HMAC
+## Webhook
 
-Headers esperados:
+Headers esperados para HMAC:
 
-- `x-webhook-timestamp`: unix timestamp em segundos
-- `x-webhook-signature`: `sha256=<assinatura_hex>`
+- `x-webhook-timestamp`
+- `x-webhook-signature`
 
 Assinatura:
 
 ```txt
-HMAC_SHA256( WEBHOOK_SECRET, "<timestamp>.<rawBody>" )
+HMAC_SHA256(WEBHOOK_SECRET, "<timestamp>.<rawBody>")
 ```
 
-Notas:
+Observações:
 
-- `rawBody` deve ser exatamente o JSON enviado (mesmo espaco e ordem de bytes)
-- Requisicoes repetidas com mesma assinatura/timestamp sao bloqueadas (anti-replay)
-- Se `WEBHOOK_ALLOW_LEGACY_SECRET=true`, o header legado `x-webhook-secret` ainda e aceito
+- `rawBody` precisa ser preservado exatamente como recebido.
+- O replay é bloqueado em banco pela tabela `webhook_replay`.
+- O modo legado com `x-webhook-secret` ainda pode ser habilitado por flag.
 
-## Teste rapido (Postman)
+## Banco de Dados
 
-1. `POST /login` -> salvar `token` e `refreshToken`
-2. `GET /usuarios` com `Bearer <token>`
-3. `POST /auth/refresh` com `refreshToken`
-4. `POST /logout` com `Bearer` + `refreshToken`
-5. `POST /webhook` sem assinatura -> deve retornar `401`
-6. `POST /webhook` com HMAC valido -> deve retornar `200`
+Tabelas principais:
 
-## Seguranca aplicada
-
-- JWT com `issuer`, `audience`, `jti`, expiracao curta
-- Revogacao persistente de access token (`token_revogados`)
-- Refresh token rotativo com revogacao de familia em caso suspeito
-- Lock progressivo de login por `login + IP`
-- Rate limit global e por rotas sensiveis
-- CORS restrito
-- `helmet`
-- Auditoria de eventos em banco
-- CI de seguranca em `.github/workflows/security.yml`
-
-## Banco de dados
-
-As tabelas de seguranca sao criadas no startup (`CREATE TABLE IF NOT EXISTS`), incluindo:
-
+- `usuarios`
+- `webhooks`
+- `funil_vendas`
 - `token_revogados`
 - `auditoria_eventos`
 - `webhook_replay`
 - `login_lockouts`
 - `refresh_tokens`
 
-Tambem estao declaradas em `banco.sql`.
+O schema base está em `banco.sql`, e as tabelas de segurança também são garantidas no startup.
+
+## Segurança Aplicada
+
+- JWT com `issuer`, `audience`, `jti` e expiração curta
+- Revogação persistente de token
+- Refresh token rotativo
+- Lock progressivo por `login + IP`
+- Rate limit global e por rotas sensíveis
+- CORS restrito
+- `helmet`
+- Auditoria em banco
+- TLS/CA configurável para MySQL no Aiven
+
+## Nest Backend
+
+O projeto `nest-backend/` não substitui o backend Express atual. Ele foi criado em pasta separada para uma arquitetura paralela em `NestJS`, também conectada a `MySQL/Aiven`. Veja `nest-backend/README.md`.
 
 ## Troubleshooting
 
-### Erro `self-signed certificate in certificate chain`
+### `self-signed certificate in certificate chain`
 
-- Preferir `DB_SSL_MODE=verify-ca` + `DB_SSL_CA_PATH` (ou `NODE_EXTRA_CA_CERTS`)
-- Em dev local apenas, use `DB_SSL_MODE=off` (ou `required` se quiser TLS sem validar CA)
+- Preferir `DB_SSL_MODE=verify-ca`
+- Configurar `DB_SSL_CA_PEM` ou `DB_SSL_CA_PATH`
+- Em desenvolvimento local, usar `NODE_EXTRA_CA_CERTS` quando necessário
 
-### Erro `EADDRINUSE: address already in use :::8000`
+### `EADDRINUSE: address already in use :::8000`
 
-- Ja existe processo usando a porta 8000
-- Encerre o processo ou altere `PORT`
+- Já existe processo usando a porta
+- Troque `PORT` ou encerre o processo atual
 
-### Login retorna sempre `401` com credenciais corretas
+### Login retorna `401` com credenciais corretas
 
 - Verifique `PASSWORD_PEPPER`
-- Se o pepper mudou, hashes antigos podem nao validar
+- Se ele mudou, hashes antigos podem falhar até serem migrados
 
-## Boas praticas
+## Boas Práticas
 
 - Nunca versionar `.env`
 - Nunca commitar segredos reais
 - Rotacionar segredos periodicamente
-- Manter `WEBHOOK_ALLOW_LEGACY_SECRET=false` apos migracao
-- Em producao, manter `DB_SSL=true` e `DB_SSL_REJECT_UNAUTHORIZED=true`
+- Preferir `DB_SSL_MODE=verify-ca` em produção
+- Usar usuário de banco dedicado, nunca `root`
