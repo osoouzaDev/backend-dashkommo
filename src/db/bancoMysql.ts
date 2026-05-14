@@ -387,6 +387,74 @@ class BancoMysql {
                 INDEX idx_refresh_expira (expira_em)
             )
         `);
+
+        await this.pool.execute(`
+            CREATE TABLE IF NOT EXISTS funil_vendas (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                lead_id BIGINT NOT NULL UNIQUE,
+                lead_nome VARCHAR(255),
+                consultor_id BIGINT NOT NULL,
+                consultor_nome VARCHAR(100),
+                origem VARCHAR(100),
+                pipeline_id BIGINT,
+                status_id BIGINT,
+                etapa VARCHAR(50),
+                valor DECIMAL(10,2) DEFAULT 0,
+                data_criacao DATETIME,
+                data_atualizacao DATETIME,
+                data_venda DATETIME NULL,
+                INDEX idx_consultor (consultor_id),
+                INDEX idx_status (status_id),
+                INDEX idx_data (data_criacao),
+                INDEX idx_data_venda (data_venda)
+            )
+        `);
+
+        const [dataVendaColumns] = await this.pool.execute<RowDataPacket[]>(
+            `SELECT COLUMN_NAME
+             FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE()
+               AND TABLE_NAME = 'funil_vendas'
+               AND COLUMN_NAME = 'data_venda'
+             LIMIT 1`
+        );
+
+        if (dataVendaColumns.length === 0) {
+            await this.pool.execute(
+                `ALTER TABLE funil_vendas
+                 ADD COLUMN data_venda DATETIME NULL AFTER data_atualizacao`
+            );
+        }
+
+        const [dataVendaIndexes] = await this.pool.execute<RowDataPacket[]>(
+            `SELECT INDEX_NAME
+             FROM INFORMATION_SCHEMA.STATISTICS
+             WHERE TABLE_SCHEMA = DATABASE()
+               AND TABLE_NAME = 'funil_vendas'
+               AND INDEX_NAME = 'idx_data_venda'
+             LIMIT 1`
+        );
+
+        if (dataVendaIndexes.length === 0) {
+            await this.pool.execute(
+                `ALTER TABLE funil_vendas
+                 ADD INDEX idx_data_venda (data_venda)`
+            );
+        }
+
+        await this.pool.execute(
+            `UPDATE funil_vendas
+             SET data_venda = COALESCE(data_venda, data_atualizacao, data_criacao)
+             WHERE status_id = 142
+               AND data_venda IS NULL`
+        );
+
+        await this.pool.execute(
+            `UPDATE funil_vendas
+             SET data_venda = NULL
+             WHERE status_id <> 142
+               AND data_venda IS NOT NULL`
+        );
     }
 
     async revogarTokenPorJti(jti: string, expUnix: number): Promise<void> {
@@ -832,6 +900,7 @@ class BancoMysql {
                 Number.isFinite(atualizadoTs) && atualizadoTs > 0
                     ? new Date(atualizadoTs * 1000)
                     : null;
+            const dataVenda = statusId === 142 ? atualizado ?? criado ?? new Date() : null;
 
             const origem =
                 this.extrairCampoCustomizadoPorNomes(lead, [
@@ -854,9 +923,10 @@ class BancoMysql {
                     etapa,
                     valor,
                     data_criacao,
-                    data_atualizacao
+                    data_atualizacao,
+                    data_venda
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON DUPLICATE KEY UPDATE
                     lead_nome = VALUES(lead_nome),
                     consultor_id = VALUES(consultor_id),
@@ -867,7 +937,16 @@ class BancoMysql {
                     etapa = VALUES(etapa),
                     valor = VALUES(valor),
                     data_criacao = COALESCE(funil_vendas.data_criacao, VALUES(data_criacao)),
-                    data_atualizacao = VALUES(data_atualizacao)`,
+                    data_atualizacao = VALUES(data_atualizacao),
+                    data_venda = CASE
+                        WHEN VALUES(status_id) = 142 THEN
+                            CASE
+                                WHEN funil_vendas.status_id = 142 AND funil_vendas.data_venda IS NOT NULL
+                                    THEN funil_vendas.data_venda
+                                ELSE COALESCE(VALUES(data_venda), VALUES(data_atualizacao), VALUES(data_criacao), NOW())
+                            END
+                        ELSE NULL
+                    END`,
                 [
                     leadId,
                     leadNome,
@@ -880,6 +959,7 @@ class BancoMysql {
                     valor,
                     criado,
                     atualizado,
+                    dataVenda,
                 ]
             );
 
@@ -909,9 +989,14 @@ class BancoMysql {
                 etapa,
                 valor,
                 data_criacao,
-                data_atualizacao
+                data_atualizacao,
+                data_venda
              FROM funil_vendas
-             ORDER BY data_criacao DESC`
+             ORDER BY
+                CASE
+                    WHEN status_id = 142 THEN COALESCE(data_venda, data_atualizacao, data_criacao)
+                    ELSE data_criacao
+                END DESC`
         );
 
         return rows.map((item: any) => ({
@@ -923,10 +1008,10 @@ class BancoMysql {
     async relatorioLeadsGanhos(): Promise<any> {
         const [rows] = await this.pool.query(
             `SELECT lead_id, lead_nome, consultor_id, consultor_nome, origem,
-                    pipeline_id, status_id, etapa, valor, data_criacao, data_atualizacao
+                    pipeline_id, status_id, etapa, valor, data_criacao, data_atualizacao, data_venda
              FROM funil_vendas
              WHERE status_id = 142
-             ORDER BY data_criacao DESC`
+             ORDER BY COALESCE(data_venda, data_atualizacao, data_criacao) DESC`
         );
 
         return rows;
@@ -935,10 +1020,20 @@ class BancoMysql {
     async buscarLeadsPorPeriodo(dataInicio: string, dataFim: string): Promise<any> {
         const [rows] = await this.pool.query(
             `SELECT lead_id, lead_nome, consultor_id, consultor_nome, origem,
-                    pipeline_id, status_id, etapa, valor, data_criacao, data_atualizacao
+                    pipeline_id, status_id, etapa, valor, data_criacao, data_atualizacao, data_venda
              FROM funil_vendas
-             WHERE data_criacao BETWEEN ? AND ?
-             ORDER BY data_criacao DESC`,
+             WHERE (
+                CASE
+                    WHEN status_id = 142 THEN COALESCE(data_venda, data_atualizacao, data_criacao)
+                    ELSE data_criacao
+                END
+             ) BETWEEN ? AND ?
+             ORDER BY (
+                CASE
+                    WHEN status_id = 142 THEN COALESCE(data_venda, data_atualizacao, data_criacao)
+                    ELSE data_criacao
+                END
+             ) DESC`,
             [`${dataInicio} 00:00:00`, `${dataFim} 23:59:59`]
         );
 

@@ -37,9 +37,11 @@ CREATE TABLE funil_vendas (
  valor DECIMAL(10,2) DEFAULT 0,
  data_criacao DATETIME,
  data_atualizacao DATETIME,
+ data_venda DATETIME NULL,
  INDEX idx_consultor (consultor_id),
  INDEX idx_status (status_id),
- INDEX idx_data (data_criacao)
+ INDEX idx_data (data_criacao),
+ INDEX idx_data_venda (data_venda)
 );
 
 CREATE TABLE IF NOT EXISTS token_revogados (
