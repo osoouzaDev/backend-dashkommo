@@ -2,12 +2,62 @@ import { Router } from "express";
 import { banco } from "../db/bancoMysql";
 import { autenticarToken, AuthRequest } from "../middlewares/auth";
 import { autorizarAdmin } from "../middlewares/autorizarAdmin";
-import { createUserSchema, idParamSchema, updateUserSchema } from "../schemas";
+import { createUserSchema, idParamSchema, updateProfileSchema, updateUserSchema } from "../schemas";
 import { registrarAuditoriaSeguro } from "../services/auditoria";
 import { getClientIp } from "../utils/request";
 import { responderErro, validarEntrada } from "../utils/validation";
 
 export const usersRouter = Router();
+
+usersRouter.put("/perfil", autenticarToken, async (req: AuthRequest, res) => {
+    try {
+        const parsedBody = validarEntrada(updateProfileSchema, req.body, res);
+
+        if (!parsedBody) {
+            return;
+        }
+
+        const userId = req.user?.id;
+
+        if (!userId) {
+            return res.sendStatus(401);
+        }
+
+        await banco.atualizarNomePerfil(userId, parsedBody.nome);
+
+        const usuarioAtualizado = await banco.findUserByid(String(userId));
+
+        if (!usuarioAtualizado) {
+            return res.status(404).json({ message: "Usuário não encontrado" });
+        }
+
+        await registrarAuditoriaSeguro("perfil_atualizar", "sucesso", {
+            userId,
+            ip: getClientIp(req),
+            requestId: req.requestId ?? null,
+        });
+
+        return res.json({
+            message: "Perfil atualizado com sucesso",
+            usuario: {
+                id: usuarioAtualizado.id,
+                nome: usuarioAtualizado.nome,
+                acesso: usuarioAtualizado.acesso,
+                email: usuarioAtualizado.email,
+            },
+        });
+    } catch (error) {
+        console.error("Erro ao atualizar perfil.", error);
+
+        await registrarAuditoriaSeguro("perfil_atualizar", "falha", {
+            userId: req.user?.id ?? null,
+            ip: getClientIp(req),
+            requestId: req.requestId ?? null,
+        });
+
+        return responderErro(res, error, "Erro ao atualizar perfil");
+    }
+});
 
 usersRouter.post("/usuarios", autenticarToken, autorizarAdmin, async (req, res) => {
     try {

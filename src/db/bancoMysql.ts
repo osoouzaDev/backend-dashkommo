@@ -1078,6 +1078,25 @@ class BancoMysql {
         );
     }
 
+    async atualizarNomePerfil(userId: number, nome: string): Promise<void> {
+        if (!Number.isInteger(userId) || userId <= 0) {
+            throw new Error("ID de usuário inválido.");
+        }
+
+        this.validarNome(nome);
+
+        const [result] = await this.pool.execute<ResultSetHeader>(
+            `UPDATE usuarios
+             SET nome = ?
+             WHERE id = ?`,
+            [nome.trim(), userId]
+        );
+
+        if (result.affectedRows === 0) {
+            throw new Error("Usuário não encontrado.");
+        }
+    }
+
     async insertUser(usuario: Usuario): Promise<number> {
         this.validarUsuario(usuario, true);
 

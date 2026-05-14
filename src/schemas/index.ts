@@ -21,6 +21,10 @@ export const updateUserSchema = userBaseSchema.extend({
     senha: z.string().min(8).max(255).optional(),
 });
 
+export const updateProfileSchema = z.object({
+    nome: z.string().trim().min(1).max(50),
+});
+
 export const idParamSchema = z.object({
     id: z.string().regex(/^\d+$/),
 });
