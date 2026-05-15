@@ -444,9 +444,20 @@ class BancoMysql {
 
         await this.pool.execute(
             `UPDATE funil_vendas
-             SET data_venda = COALESCE(data_venda, data_atualizacao, data_criacao)
+             SET data_venda = data_criacao
              WHERE status_id = 142
-               AND data_venda IS NULL`
+               AND data_venda IS NULL
+               AND data_criacao IS NOT NULL`
+        );
+
+        await this.pool.execute(
+            `UPDATE funil_vendas
+             SET data_venda = data_criacao
+             WHERE status_id = 142
+               AND data_venda = data_atualizacao
+               AND data_criacao IS NOT NULL
+               AND data_atualizacao IS NOT NULL
+               AND TIMESTAMPDIFF(DAY, data_criacao, data_atualizacao) >= 30`
         );
 
         await this.pool.execute(
@@ -900,7 +911,18 @@ class BancoMysql {
                 Number.isFinite(atualizadoTs) && atualizadoTs > 0
                     ? new Date(atualizadoTs * 1000)
                     : null;
-            const dataVenda = statusId === 142 ? atualizado ?? criado ?? new Date() : null;
+            const oldStatusId = Number(lead?.old_status_id);
+            const mudouParaGanho =
+                statusId === 142 &&
+                Number.isInteger(oldStatusId) &&
+                oldStatusId > 0 &&
+                oldStatusId !== 142;
+            const dataVenda =
+                statusId === 142
+                    ? mudouParaGanho
+                        ? atualizado ?? criado ?? null
+                        : criado ?? atualizado ?? null
+                    : null;
 
             const origem =
                 this.extrairCampoCustomizadoPorNomes(lead, [
@@ -943,7 +965,7 @@ class BancoMysql {
                             CASE
                                 WHEN funil_vendas.status_id = 142 AND funil_vendas.data_venda IS NOT NULL
                                     THEN funil_vendas.data_venda
-                                ELSE COALESCE(VALUES(data_venda), VALUES(data_atualizacao), VALUES(data_criacao), NOW())
+                                ELSE COALESCE(VALUES(data_venda), VALUES(data_criacao), VALUES(data_atualizacao))
                             END
                         ELSE NULL
                     END`,
@@ -994,7 +1016,7 @@ class BancoMysql {
              FROM funil_vendas
              ORDER BY
                 CASE
-                    WHEN status_id = 142 THEN COALESCE(data_venda, data_atualizacao, data_criacao)
+                   WHEN status_id = 142 THEN COALESCE(data_venda, data_criacao, data_atualizacao)
                     ELSE data_criacao
                 END DESC`
         );
@@ -1011,7 +1033,7 @@ class BancoMysql {
                     pipeline_id, status_id, etapa, valor, data_criacao, data_atualizacao, data_venda
              FROM funil_vendas
              WHERE status_id = 142
-             ORDER BY COALESCE(data_venda, data_atualizacao, data_criacao) DESC`
+             ORDER BY COALESCE(data_venda, data_criacao, data_atualizacao) DESC`
         );
 
         return rows;
@@ -1024,13 +1046,13 @@ class BancoMysql {
              FROM funil_vendas
              WHERE (
                 CASE
-                    WHEN status_id = 142 THEN COALESCE(data_venda, data_atualizacao, data_criacao)
+                   WHEN status_id = 142 THEN COALESCE(data_venda, data_criacao, data_atualizacao)
                     ELSE data_criacao
                 END
              ) BETWEEN ? AND ?
              ORDER BY (
                 CASE
-                    WHEN status_id = 142 THEN COALESCE(data_venda, data_atualizacao, data_criacao)
+                   WHEN status_id = 142 THEN COALESCE(data_venda, data_criacao, data_atualizacao)
                     ELSE data_criacao
                 END
              ) DESC`,
