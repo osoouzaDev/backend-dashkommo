@@ -745,6 +745,7 @@ class BancoMysql {
         const etapas: Record<number, string> = {
             100504439: "Tenho que descobrir",
             100233527: "Qualificado - Em conversa",
+            96885212: "Pronto para Falar",
             84315468: "Alinhamento Regulaziração / L. de Pendências",
             81175456: "Gerar Forms",
             73520776: "Movido para Cadência",
