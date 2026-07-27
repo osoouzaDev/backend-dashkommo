@@ -45,7 +45,9 @@ const MAX_LEAD_NOME = 255;
 const STATUS_VALIDOS = new Set<number>([
     100504439,
     100233527,
+    96885212,
     84315468,
+    82988164,
     81175456,
     73520776,
     72912304,
