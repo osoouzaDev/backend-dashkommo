@@ -747,6 +747,7 @@ class BancoMysql {
             100233527: "Qualificado - Em conversa",
             96885212: "Pronto para Falar",
             84315468: "Alinhamento Regulaziração / L. de Pendências",
+            82988164: "Desqualificado",
             81175456: "Gerar Forms",
             73520776: "Movido para Cadência",
             72912304: "Lead novo",
