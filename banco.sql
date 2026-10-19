@@ -11,8 +11,12 @@ CREATE TABLE IF NOT EXISTS usuarios (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-INSERT INTO dbdefault.usuarios (nome, email, acesso, setor, userLogin, senha)
-VALUES ('Souza', 'admin@example.com', 'administrador', 'TI', 'souza.dev', 'REDACTED');
+-- Crie o primeiro administrador manualmente com uma senha forte.
+-- A senha é armazenada em argon2id (com PASSWORD_PEPPER) ou bcrypt legado.
+-- Gere o hash e insira abaixo, ou crie o usuário pelo fluxo da aplicação.
+-- INSERT INTO dbdefault.usuarios (nome, email, acesso, setor, userLogin, senha)
+-- VALUES ('Admin', 'admin@example.com', 'administrador', 'TI', 'admin',
+--         '<hash-da-senha>');
 
 CREATE TABLE webhooks (
  id INT AUTO_INCREMENT PRIMARY KEY,
